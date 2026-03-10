@@ -8,14 +8,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v1.8.7: 智能优化与 CBO 标准对齐版"""
+    """Meta ADS 管理器 v1.9.1: 深度参数补全版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
         self.ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
         self.page_id = os.getenv('META_PAGE_ID')
-        # 经诊断确认为正式 Meta App ID
+        # 正式 Meta App ID
         self.meta_app_id = "1807921329643155"
+        # 正式商店链接
+        self.app_link = os.getenv('META_APP_LINK', 'https://apps.apple.com/app/id6504221151')
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _load_config(self):
@@ -24,16 +26,14 @@ class CampaignManager:
         except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0}}
 
     def get_all_campaigns(self):
-        """获取所有 Campaign (包含 CBO 预算信息)"""
         try:
             url = f"{self.base_url}/{self.ad_account_id}/campaigns"
-            params = {'fields': 'id,name,status,effective_status,start_time,daily_budget,lifetime_budget,objective', 'access_token': self.access_token, 'limit': 50}
+            params = {'fields': 'id,name,status,effective_status,start_time,daily_budget,lifetime_budget', 'access_token': self.access_token, 'limit': 50}
             resp = requests.get(url, params=params).json()
             return sorted(resp.get('data', []), key=lambda x: x.get('start_time', '0'), reverse=True)
         except: return []
 
     def create_campaign(self, drama_name, video_url):
-        """创建 Campaign (CBO 模式 + 自动激活)"""
         try:
             cfg = self._load_config().get('default', {})
             budget = int(cfg.get('daily_budget', 50))
@@ -46,7 +46,7 @@ class CampaignManager:
             v_id = v_resp.get('id')
             if not v_id: return {'status': 'error', 'error': f"Video Fail: {v_resp}"}
 
-            # 2. Campaign (CBO 模式)
+            # 2. Campaign
             c_payload = {
                 'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED',
                 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget * 100,
@@ -56,11 +56,14 @@ class CampaignManager:
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
-            # 3. AdSet
+            # 3. AdSet (补充 object_store_url)
             as_payload = {
                 'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS',
                 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS',
-                'promoted_object': json.dumps({'application_id': self.meta_app_id}),
+                'promoted_object': json.dumps({
+                    'application_id': self.meta_app_id,
+                    'object_store_url': self.app_link # 补全商店链接参数
+                }),
                 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile']}),
                 'status': 'PAUSED', 'access_token': token
             }
@@ -68,7 +71,7 @@ class CampaignManager:
             as_id = as_resp.get('id')
             if not as_id: return {'status': 'error', 'error': f"AdSet Fail: {as_resp}"}
 
-            # 4. Creative & Ad
+            # 4. Creative
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
@@ -76,11 +79,12 @@ class CampaignManager:
             cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token}).json()
             cr_id = cr_resp.get('id')
             
+            # 5. Ad
             ad_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'PAUSED', 'access_token': token}).json()
             ad_id = ad_resp.get('id')
             if not ad_id: return {'status': 'error', 'error': f"Ad Fail: {ad_resp}"}
 
-            # 5. Step 2: Auto Activate
+            # 6. Auto Activate
             requests.post(f"{self.base_url}/{c_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{as_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{ad_id}", data={'status': 'ACTIVE', 'access_token': token})
@@ -94,13 +98,11 @@ class CampaignManager:
         except: return False
 
     def execute_action(self, action):
-        """执行优化动作 (兼容 CBO 预算调整)"""
         token = self.access_token
         try:
             if action['type'] == 'PAUSE':
                 return requests.post(f"{self.base_url}/{action['cid']}", data={'status': 'PAUSED', 'access_token': token}).json().get('success', False)
             elif action['type'] == 'BUDGET':
-                # 关键：CBO 模式下调整的是 Campaign ID 的预算
                 return requests.post(f"{self.base_url}/{action['cid']}", data={'daily_budget': int(action['value'] * 100), 'access_token': token}).json().get('success', False)
             return False
         except: return False
@@ -112,7 +114,7 @@ class CampaignManager:
             resp = requests.get(url, params=params).json()
             res = {}
             if 'data' in resp:
-                for item in resp.get('data', []):
+                for item in resp['data']:
                     inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
                     roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
                     res[item['campaign_id']] = {'spend': float(item.get('spend', 0)), 'installs': inst, 'roi': roi, 'cpi': float(item.get('spend', 0))/inst if inst > 0 else 0}
@@ -141,6 +143,6 @@ class CampaignManager:
             cid = c['id']
             ins = insights.get(cid, {})
             spend, cpi = ins.get('spend', 0), ins.get('cpi', 0)
-            if cpi > threshold and spend > 10: # 简化版规则用于测试
+            if cpi > threshold and spend > 10:
                 actions.append({'type': 'PAUSE', 'cid': cid, 'name': c.get('name'), 'reason': f"CPI (${cpi:.2f}) > 阈值"})
         return actions

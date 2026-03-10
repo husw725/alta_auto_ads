@@ -21,34 +21,37 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _extract_real_name_from_url(self, video_url):
-        """[增强] 从复杂的 xxx_dramaname_xx_x 结构中精准剥离剧名"""
+        """[极限增强] 剥离 (en), [pt], xxx-dramaname-xx 等各种干扰结构"""
         try:
             filename = unquote(video_url.split('/')[-1])
-            # 1. 移除后缀
-            name = re.sub(r'\.(mp4|mov|mkv)$', '', filename, flags=re.IGNORECASE)
-            # 2. 按下划线拆分
-            parts = re.split(r'[_\-\s]+', name)
+            # 1. 统一分隔符：将括号、中括号、下划线、连字符全看作分隔符
+            name = re.sub(r'[\(\)\[\]\._\-]', ' ', filename)
+            # 2. 移除后缀
+            name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
             
-            # 3. 黑名单过滤（不属于剧名的常见片段）
+            # 3. 按空格拆分
+            parts = name.split()
+            
+            # 4. 动态黑名单 (包含常见语言代码和版本标识)
             blacklist = {
-                'v1', 'v2', 'v3', 'eng', 'english', '1080p', '720p', '60fps', '30fps', 
-                'pt', 'es', 'espanol', 'short', 'final', 'fixed', 'export'
+                'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
+                '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
+                'ios', 'android', 'ad', 'drama', 'mp4'
             }
             
             clean_parts = []
             for p in parts:
-                # 过滤日期 (8位数字)
+                p_lower = p.lower()
+                # 过滤日期
                 if re.match(r'^\d{4}\d{2}\d{2}$', p) or re.match(r'^\d{8}$', p): continue
-                # 过滤纯数字 (通常是 ID 或版本)
-                if p.isdigit() and len(p) < 4: continue
                 # 过滤黑名单
-                if p.lower() in blacklist: continue
+                if p_lower in blacklist: continue
+                # 过滤太短的词 (通常是干扰位)
+                if len(p) <= 1: continue
                 clean_parts.append(p)
             
-            # 4. 重新组合
+            # 5. 重新组合并处理驼峰
             result = " ".join(clean_parts).strip()
-            
-            # 5. 进一步尝试拆分驼峰式命名 (如 MistakenLover -> Mistaken Lover)
             result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
             
             return result if len(result) > 2 else None

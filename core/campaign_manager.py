@@ -25,10 +25,12 @@ class CampaignManager:
     def _get_or_upload_fallback_hash(self, token):
         """[核心加固] 预先上传一个图标作为保险绳"""
         try:
-            # 使用 AltaTV 官网的 Favicon 或 Logo 确保合规
-            logo_url = "https://altatv.net/favicon.png"
+            # 使用 GitHub 托管的图片或稳定的 CDN 图片确保 Meta 100% 能下载
+            logo_url = "https://raw.githubusercontent.com/husw725/alta_auto_ads/main/config/logo.png"
+            # 尝试从稳定的 CDN 获取
             res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={
-                'copy_from_url': logo_url, 'access_token': token
+                'copy_from_url': "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png", 
+                'access_token': token
             }).json()
             if 'images' in res:
                 # 获取返回的第一个 Hash
@@ -41,7 +43,7 @@ class CampaignManager:
         """[参数回归] 恢复 40 秒探测窗口 (8 次 * 5 秒)"""
         for i in range(8): # 恢复到 8 次
             try:
-                time.sleep(5) # 恢复到 5 秒间隔
+                time.sleep(8) # 恢复到 5 秒间隔
                 url = f"{self.base_url}/{video_id}"
                 params = {'fields': 'thumbnails', 'access_token': token}
                 res = requests.get(url, params=params).json()

@@ -112,14 +112,32 @@ elif page == "📊 数据看板":
         # 构建深度报表数据
         rows = []
         insights = st.session_state.yesterday_insights
+        from datetime import datetime
+        import pytz
+        tz_beijing = pytz.timezone('Asia/Shanghai')
+
         for c in st.session_state.campaign_list:
             cid = c['id']
             ins = insights.get(cid, {})
+            
+            # 时间转换
+            raw_time = c.get('start_time', '')
+            if raw_time:
+                try:
+                    # 假设原始时间是 UTC，转换为北京时间
+                    dt_utc = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S%z")
+                    dt_beijing = dt_utc.astimezone(tz_beijing)
+                    display_time = dt_beijing.strftime("%m-%d %H:%M")
+                except:
+                    display_time = raw_time
+            else:
+                display_time = "-"
+
             rows.append({
                 "广告ID": cid,
                 "广告名称": c['name'],
                 "状态": c['effective_status'],
-                "创建时间": c['start_time'],
+                "创建时间": display_time,
                 "广告花费": ins.get('spend', 0),
                 "预算": c.get('budget', 0),
                 "点击量": ins.get('clicks', 0),

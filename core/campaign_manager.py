@@ -19,8 +19,11 @@ class CampaignManager:
         self.media_buyer = "Auto ADS"
 
     def _load_dynamic_config(self):
-        with open('config/config.json', 'r') as f:
-            return json.load(f).get('default', {})
+        try:
+            with open('config/config.json', 'r') as f:
+                return json.load(f).get('default', {})
+        except:
+            return {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"}
 
     def get_yesterday_insights(self):
         """获取昨日消耗数据"""
@@ -73,9 +76,8 @@ class CampaignManager:
             return False
 
     def create_campaign(self, drama_name, video_url):
-        """创建 Campaign (使用 config.json 中的策略)"""
+        """创建 Campaign (默认直接激活)"""
         try:
-            # 加载实时配置
             cfg = self._load_dynamic_config()
             country = cfg.get('country', 'US')
             budget = cfg.get('daily_budget', 50.0)
@@ -89,37 +91,32 @@ class CampaignManager:
             if 'id' not in v_resp: return {'status': 'error', 'error': 'Video upload failed'}
             v_id = v_resp['id']
             
-            # 2. Create Campaign
-            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_SALES', 'status': 'PAUSED', 'access_token': self.access_token}).json()
+            # 2. Create Campaign (Set ACTIVE)
+            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_SALES', 'status': 'ACTIVE', 'access_token': self.access_token}).json()
             c_id = c_resp['id']
             
-            # 3. Create AdSet
+            # 3. Create AdSet (Set ACTIVE)
             as_payload = {
                 'name': f"{name_base}-AS",
                 'campaign_id': c_id,
                 'daily_budget': int(budget * 100),
-                'optimization_goal': 'OFFSITE_CONVERSIONS' if goal == 'CONTENT_VIEW' else 'OFFSITE_CONVERSIONS', 
+                'optimization_goal': 'OFFSITE_CONVERSIONS',
                 'billing_event': 'IMPRESSIONS',
                 'promoted_object': json.dumps({'pixel_id': self.pixel_id, 'custom_event_type': 'CONTENT_VIEW' if goal == 'CONTENT_VIEW' else 'MOBILE_APP_INSTALLS'}),
                 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile']}),
-                'status': 'PAUSED',
+                'status': 'ACTIVE',
                 'access_token': self.access_token
             }
-            # 强制适配 Mobile App Install 逻辑
-            if goal == "MOBILE_APP_INSTALLS":
-                as_payload['optimization_goal'] = "OFFSITE_CONVERSIONS" # 某些 API 版本要求通过 Pixel 事件优化安装
-                # 如果是纯应用安装 Objective，某些 API 要求用 APP_INSTALLS 优化
-            
             as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data=as_payload).json()
             as_id = as_resp.get('id')
             
-            # 4. Creative & Ad
+            # 4. Creative & Ad (Set ACTIVE)
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
             story_spec = {'page_id': self.page_id, 'video_data': {'video_id': v_id, 'message': copy.get('primary_text', 'Watch now!')}}
             cr_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': self.access_token}).json().get('id')
-            ad_id = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'PAUSED', 'access_token': self.access_token}).json().get('id')
+            ad_id = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'ACTIVE', 'access_token': self.access_token}).json().get('id')
             
             return {'status': 'success', 'campaign_id': c_id, 'adset_id': as_id, 'ad_id': ad_id}
         except Exception as e:

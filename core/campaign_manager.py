@@ -41,9 +41,12 @@ class CampaignManager:
     def create_campaign(self, drama_name, video_url, thumb_url=None):
         try:
             token = self.access_token
-            real_name = self._extract_real_name_from_url(video_url)
-            display_name = real_name if real_name else drama_name
-            name_base = f"{display_name}-{datetime.now().strftime('%m%d%H%M')}"
+            cfg = self._load_config().get('default', {})
+            country = cfg.get('country', 'US')
+            today = datetime.now().strftime('%Y%m%d')
+            
+            # 🚀 锁定 6 段式标准命名: {剧名}-{国家}-{日期}-w2a-Auto-龙虾ai
+            name_base = f"{drama_name}-{country}-{today}-w2a-Auto-龙虾ai"
             
             v_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': video_url, 'access_token': token}).json()
             v_id = v_resp.get('id')

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v2.2.3: 极限稳定 + 精准海报版"""
+    """Meta ADS 管理器 v2.2.5: 极简稳定版 (弃用网页搜索)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -21,69 +21,26 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _extract_real_name_from_url(self, video_url):
-        """[核心算法] 从混乱的文件名中精准剥离剧名"""
+        """从文件名中剥离剧名"""
         try:
             filename = unquote(video_url.split('/')[-1])
-            # 1. 彻底移除所有非 ASCII 字符 (如中文)
             name = filename.encode('ascii', 'ignore').decode('ascii')
-            # 2. 统一分隔符并处理驼峰
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
             name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
-            # 3. 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
-            
             parts = name.split()
             blacklist = {
                 'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
                 '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
                 'ios', 'android', 'ad', 'drama', 'mp4', 'bsj', 'kk', 'alta', 'kkshort'
             }
-            
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                if re.match(r'^\d{4,12}$', p): continue
-                if p_lower in blacklist: continue
-                if p.isdigit() and len(p) < 5: continue
-                if len(p) <= 1: continue
+                if re.match(r'^\d{4,12}$', p) or p_lower in blacklist or (p.isdigit() and len(p) < 5) or len(p) <= 1: continue
                 clean_parts.append(p)
-            
             result = " ".join(clean_parts).strip()
             return result if len(result) > 2 else None
-        except: return None
-
-    def _scrape_poster_from_web(self, drama_name):
-        """[邻近定位] 根据截图布局，精准抓取标题左侧/上方的海报"""
-        try:
-            search_key = drama_name.replace(' ', '+')
-            url = f"https://altatv.com/search?keywords={search_key}&type=1"
-            print(f"🔍 [DEBUG] 正在访问官网搜索页: {url}")
-            
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, timeout=5).text
-            
-            # 定位剧名在 HTML 中的位置
-            title_pos = resp.lower().find(drama_name.lower())
-            
-            if title_pos != -1:
-                # 截图显示海报在左，源码中在文字上方。向上搜索 3000 字符。
-                search_start = max(0, title_pos - 3000)
-                upper_context = resp[search_start:title_pos]
-                matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', upper_context)
-                
-                if matches:
-                    # 取距离标题最近的一个 (即最后一个匹配项)
-                    target_img = matches[-1]
-                    print(f"✅ [DEBUG] 成功定位到标题附近的海报: {target_img}")
-                    return target_img
-            
-            # 兜底：全局搜索
-            global_matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
-            if global_matches:
-                # 优先取 index 1 (通常是海报而不是图标)
-                target_global = global_matches[1] if len(global_matches) > 1 else global_matches[0]
-                return target_global
-            return None
         except: return None
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
@@ -102,76 +59,51 @@ class CampaignManager:
         return None
 
     def create_campaign(self, drama_name, video_url, thumb_url=None):
-        """创建 Campaign (优先使用传入的 XMP 海报)"""
+        """创建 Campaign (主打 Meta 抽帧，辅以 XMP 海报兜底)"""
         try:
             token = self.access_token
             real_name = self._extract_real_name_from_url(video_url)
-            search_name = real_name if real_name else drama_name
-            name_base = f"{search_name}-{datetime.now().strftime('%m%d%H%M')}"
+            display_name = real_name if real_name else drama_name
+            name_base = f"{display_name}-{datetime.now().strftime('%m%d%H%M')}"
 
-            # 1. Video Upload
+            # 1. Upload Video
             v_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': video_url, 'access_token': token}).json()
             v_id = v_resp.get('id')
             if not v_id: return {'status': 'error', 'error': f"Step 1 Video Fail: {v_resp}"}
 
-            # 2. 🚀 缩略图决策逻辑：优先使用传入的 thumb_url (来自 XMP)
-            # 先尝试 40 秒 Meta 官方抽帧
+            # 2. 缩略图决策逻辑
             img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
             
             if not img_hash and thumb_url:
-                print(f"⏳ 视频抽帧超时，尝试上传 XMP 海报: {thumb_url}")
-                # 只有当它是合法图片时才尝试上传
-                if any(thumb_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.webp']):
-                    img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': thumb_url, 'access_token': token}).json()
-                    if 'images' in img_res:
-                        img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash']
-
-            # 3. 终极兜底：如果还是没有，用稳定的 Play Store 图标
-            if not img_hash:
-                print("⚠️ 无法获取海报，启动图标兜底...")
-                fallback_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
-                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': fallback_url, 'access_token': token}).json()
+                print(f"⏳ 视频抽帧超时，直接使用 XMP 海报: {thumb_url}")
+                # 上传 XMP 提供的封面并获取 Hash
+                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': thumb_url, 'access_token': token}).json()
                 if 'images' in img_res:
                     img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash']
 
+            # 3. 终极兜底 (如果 Meta 和 XMP 封面都失效)
+            if not img_hash:
+                fallback_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
+                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': fallback_url, 'access_token': token}).json()
+                img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash'] if 'images' in img_res else None
+
             if not img_hash: return {'status': 'error', 'error': "无法获取图片 Hash"}
 
-            # 3. Campaign (CBO)
-            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={
-                'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED',
-                'special_ad_categories': json.dumps(['NONE']), 'daily_budget': 5000,
-                'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token
-            }).json()
+            # 4. Campaign & AdSet & Creative & Ad (逻辑保持不变)
+            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': 5000, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
             c_id = c_resp.get('id')
-
-            # 4. AdSet (iOS 锁定)
-            as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={
-                'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS',
-                'destination_type': 'APP', 'billing_event': 'IMPRESSIONS',
-                'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}),
-                'targeting': json.dumps({'geo_locations': {'countries': ['US']}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}),
-                'status': 'PAUSED', 'access_token': token
-            }).json()
-            as_id = as_resp.get('id')
-
-            # 5. AdCreative
-            from skills.copywriter import Copywriter
-            writer = Copywriter()
-            copy = writer.generate_copy(search_name).get('versions', [{}])[0]
-            story_spec = {
-                'page_id': self.page_id,
-                'video_data': {
-                    'video_id': v_id, 'image_hash': img_hash,
-                    'message': copy.get('primary_text', 'Watch now!'),
-                    'title': copy.get('headline', f"Watch {search_name}"),
-                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
-                }
-            }
-            cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token}).json()
-            cr_id = cr_resp.get('id')
             
-            # 6. Ad & Activate
+            as_payload = {'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps({'geo_locations': {'countries': ['US']}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}), 'status': 'PAUSED', 'access_token': token}
+            as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data=as_payload).json().get('id')
+            
+            from skills.copywriter import Copywriter
+            copy = Copywriter().generate_copy(display_name).get('versions', [{}])[0]
+            story_spec = {'page_id': self.page_id, 'video_data': {'video_id': v_id, 'image_hash': img_hash, 'message': copy.get('primary_text', 'Watch now!'), 'title': copy.get('headline', f"Watch {display_name}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}}
+            cr_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token}).json().get('id')
+            
             ad_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'PAUSED', 'access_token': token}).json()
+            
+            # Activate all
             requests.post(f"{self.base_url}/{c_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{as_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{ad_resp.get('id', '')}", data={'status': 'ACTIVE', 'access_token': token})

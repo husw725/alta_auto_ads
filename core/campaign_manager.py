@@ -37,8 +37,9 @@ class CampaignManager:
             # 2. Campaign (切换到标准的 APP_PROMOTION 目标)
             c_data = {
                 'name': name_base,
-                'objective': 'OUTCOME_APP_PROMOTION', # 修正目标
+                'objective': 'OUTCOME_APP_PROMOTION',
                 'status': 'PAUSED',
+                'special_ad_categories': json.dumps(['NONE']), # 补全必填参数
                 'access_token': token
             }
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data=c_data).json()

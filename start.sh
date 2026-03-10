@@ -1,25 +1,23 @@
 #!/bin/bash
 echo "🚀 Starting Auto Meta ADS..."
 
-# 1. 检查虚拟环境
+# 检查虚拟环境
 if [ ! -d ".venv" ]; then
     echo "📦 Creating virtual environment..."
     python3 -m venv .venv
 fi
 
-# 2. 激活并同步依赖
 source .venv/bin/activate
-echo "🔧 Checking dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.txt > /dev/null 2>&1
 
-# 3. 检查 .env
-if [ ! -f ".env" ]; then
-    echo "⚠️ .env file not found, creating from template..."
-    cp .env.example .env
-    echo "💡 Please edit .env with your credentials."
+# --- 注入环境变量逻辑 ---
+if [ -f ".env" ]; then
+    echo "🔑 Loading environment variables from .env..."
+    export $(grep -v '^#' .env | xargs)
 fi
 
-# 4. 启动系统
-echo "✨ Launching Streamlit..."
-streamlit run app.py
+# 如果 .env 中没有设置端口，默认使用 8501
+PORT=${STREAMLIT_SERVER_PORT:-8501}
+
+echo "✨ Launching Streamlit on port $PORT..."
+streamlit run app.py --server.port $PORT

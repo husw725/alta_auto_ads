@@ -6,89 +6,74 @@ from datetime import datetime
 from core.campaign_manager import CampaignManager
 
 def run_job(is_test=False):
-    # 1. 加载配置 (带自动创建逻辑)
+    # 1. 加载配置
     config_path = 'config/config.json'
-    if not os.path.exists('config'): os.makedirs('config')
-    
-    if not os.path.exists(config_path):
-        default_config = {
-            "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
-            "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
-        }
-        with open(config_path, 'w') as f: json.dump(default_config, f, indent=2)
-    
     with open(config_path, 'r') as f:
         config = json.load(f)
     
     report_cfg = config.get('report', {})
     if not report_cfg.get('enabled') and not is_test:
-        print("Report is disabled.")
         return
 
-    # 2. 获取数据
+    # 2. 获取数据与执行自动优化
     cm = CampaignManager()
-    insights = cm.get_yesterday_insights()
     campaigns = cm.get_all_campaigns()
+    insights = cm.get_yesterday_insights()
     
+    # 🚀 [核心升级]：日报前自动执行调优逻辑
+    pending_actions = cm.evaluate_optimization_rules(campaigns, insights)
+    executed_log = ""
+    if pending_actions:
+        for act in pending_actions:
+            if cm.execute_action(act):
+                executed_log += f"- ✅ 已自动暂停: **{act['name']}** (原因: {act['reason']})\n"
+    
+    if not executed_log:
+        executed_log = "- ✨ 昨日所有广告表现均在阈值内，无需干预。\n"
+
     # 3. 计算汇总
-    total_spend = sum(ins['spend'] for ins in insights.values())
-    total_conv = sum(ins['conversions'] for ins in insights.values())
-    avg_cpi = total_spend / total_conv if total_conv > 0 else 0
+    total_spend = sum(ins.get('spend', 0) for ins in insights.values())
+    total_installs = sum(ins.get('installs', 0) for ins in insights.values())
+    avg_cpi = total_spend / total_installs if total_installs > 0 else 0
     
-    # 4. 构建分析报表 (手机端优化版)
+    # 4. 构建分析报表
     details = ""
-    # 只显示昨日有消耗的或者最近的 10 条
     sorted_c = sorted(campaigns, key=lambda x: insights.get(x['id'], {}).get('spend', 0), reverse=True)
-    
     for c in sorted_c[:10]:
-        ins = insights.get(c['id'], {'spend': 0, 'conversions': 0, 'cpi': 0})
+        ins = insights.get(c['id'], {'spend': 0, 'installs': 0, 'cpi': 0})
         status_icon = "🟢" if c['effective_status'] == 'ACTIVE' else "🟡"
         details += f"**{c['name']}**\n"
-        details += f"- 状态: {status_icon} | 消耗: `${ins['spend']:.2f}`\n"
-        details += f"- 转化: `{ins['conversions']}` | CPI: `${ins['cpi']:.2f}`\n\n"
-
-    # AI 策略逻辑
-    analysis = "#### 🧠 AI 调优建议\n"
-    if total_spend > 0:
-        if avg_cpi < 0.5:
-            analysis += "✅ **表现优异**: 整体 CPI 低于 $0.5。建议今日对 Top 3 剧集上调 20% 预算以获取更多流量。\n"
-        elif avg_cpi > 1.0:
-            analysis += "⚠️ **风险预警**: 整体 CPI 偏高。建议排查昨日高成本素材，及时止损并更换新素材。\n"
-        else:
-            analysis += "✨ **运行平稳**: 成本符合预期。建议继续观察，并尝试小幅度测试新剧集。\n"
-    else:
-        analysis += "📭 **无数据**: 昨日无广告消耗。请确认是否有 Campaign 处于 Active 状态或账户余额是否充足。\n"
+        details += f"- 状态: {status_icon} | 消耗: `${ins['spend']:.2f}` | 安装: `{ins['installs']}` | CPI: `${ins['cpi']:.2f}`\n\n"
 
     report_md = f"""# 📊 Meta 投流昨日深度日报
 > 📅 日期: {datetime.now().strftime('%Y-%m-%d')}
 
 ## 📈 整体表现
 - **总消耗**: `${total_spend:.2f}`
-- **总转化**: `{total_conv}`
+- **总安装**: `{total_installs}`
 - **平均 CPI**: `${avg_cpi:.2f}`
 
 ---
 
-## 🔍 重点剧集详情
+## 🤖 自动调优战报
+{executed_log}
+
+---
+
+## 🔍 重点剧集详情 (Top 10)
 {details}
 
 ---
-
-{analysis}
-
----
-*Auto Meta ADS · 智能报表助手*
+*Auto Meta ADS · 智能风控引擎已介入*
 """
 
     # 5. 发送
     webhook = report_cfg.get('webhook_url')
     if webhook:
-        # 使用本地脚本发送
         cmd = ["python3", "/Users/husw/.gemini/skills/dingtalk-sender/scripts/send.py", webhook, report_md]
         subprocess.run(cmd)
-        print("Report sent.")
+        print(f"Report sent with {len(pending_actions)} actions.")
 
 if __name__ == "__main__":
     import sys
-    is_test = "--test" in sys.argv
-    run_job(is_test)
+    run_job(is_test="--test" in sys.argv)

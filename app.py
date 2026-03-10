@@ -54,7 +54,9 @@ if page == "💬 AI 投流助手":
                     st.write(f"确认投流: **{res.get('drama')}**")
                     if st.form_submit_button("🚀 启动并激活 Campaign"):
                         with st.spinner("执行中..."):
-                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'])
+                            # 从素材详情中提取封面图
+                            thumb_url = res.get('video_detail', {}).get('cover_url')
+                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'], thumb_url)
                         if c_res.get('status') == 'success': st.success("✅ 投放已激活！")
                         else: st.error(f"❌ 失败: {c_res.get('error')}")
 

@@ -8,13 +8,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v1.9.3: 全字段合规版 (对齐 v23.0 标准)"""
+    """Meta ADS 管理器 v1.9.6: 全能合规版 (补全视频缩略图)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
         self.ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
         self.page_id = os.getenv('META_PAGE_ID')
-        # 官方锁定的 ID 和 URL
         self.meta_app_id = "1807921329643155"
         self.official_store_url = "http://itunes.apple.com/app/id6469592412"
         self.base_url = "https://graph.facebook.com/v21.0"
@@ -24,7 +23,8 @@ class CampaignManager:
             with open('config/config.json', 'r') as f: return json.load(f)
         except: return {"default": {"country": "US", "daily_budget": 50}}
 
-    def create_campaign(self, drama_name, video_url):
+    def create_campaign(self, drama_name, video_url, thumb_url=None):
+        """创建 Campaign (包含缩略图补全)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
@@ -36,79 +36,56 @@ class CampaignManager:
             v_id = v_resp.get('id')
             if not v_id: return {'status': 'error', 'error': f"Video Fail: {v_resp}"}
 
-            # 2. Campaign (CBO 模式)
+            # 2. Campaign (CBO)
             c_payload = {
-                'name': name_base, 
-                'objective': 'OUTCOME_APP_PROMOTION', 
-                'status': 'PAUSED',
-                'special_ad_categories': json.dumps(['NONE']), 
-                'daily_budget': budget * 100,
-                'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 
-                'access_token': token
+                'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED',
+                'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget * 100,
+                'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token
             }
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data=c_payload).json()
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
-            # 3. AdSet (操作系统对齐 + 目的地对齐)
+            # 3. AdSet (iOS 锁定)
             as_payload = {
-                'name': f"{name_base}-AS", 
-                'campaign_id': c_id, 
-                'optimization_goal': 'APP_INSTALLS',
-                'destination_type': 'APP', 
-                'billing_event': 'IMPRESSIONS',
-                'promoted_object': json.dumps({
-                    'application_id': self.meta_app_id,
-                    'object_store_url': self.official_store_url
-                }),
-                'targeting': json.dumps({
-                    'geo_locations': {'countries': [cfg.get('country', 'US')]}, 
-                    'device_platforms': ['mobile'],
-                    'user_os': ['iOS'] # 必须指定 iOS
-                }),
-                'status': 'PAUSED', 
-                'access_token': token
+                'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS',
+                'destination_type': 'APP', 'billing_event': 'IMPRESSIONS',
+                'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}),
+                'targeting': json.dumps({'geo_locations': {'countries': [cfg.get('country', 'US')]}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}),
+                'status': 'PAUSED', 'access_token': token
             }
             as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data=as_payload).json()
             as_id = as_resp.get('id')
             if not as_id: return {'status': 'error', 'error': f"AdSet Fail: {as_resp}"}
 
-            # 4. AdCreative (补全 CTA、Headline 等所有必填版块)
+            # 4. AdCreative (补全 image_url)
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
             
-            # 重要：构建完整的 story_spec，包含 CTA 和标题
+            # 如果 XMP 没给封面，则尝试用视频 URL 兜底（Meta 有时会自动提取，但显式传更好）
+            final_thumb = thumb_url if thumb_url else video_url
+
             story_spec = {
                 'page_id': self.page_id,
                 'video_data': {
                     'video_id': v_id,
-                    'message': copy.get('primary_text', 'Watch the latest drama now!'), # 广告正文
-                    'title': copy.get('headline', f"Watch {drama_name}"), # 强制要求：广告标题 (Headline)
-                    'call_to_action': {
-                        'type': 'INSTALL_APP', # 修正为报错中允许的正确枚举值
-                        'value': {
-                            'link': self.official_store_url
-                        }
-                    }
+                    'image_url': final_thumb, # 关键修复：补全缩略图
+                    'message': copy.get('primary_text', 'Watch the latest drama now!'),
+                    'title': copy.get('headline', f"Watch {drama_name}"),
+                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
                 }
             }
             
             cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={
-                'name': f"{name_base}-Cr",
-                'object_story_spec': json.dumps(story_spec),
-                'access_token': token
+                'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token
             }).json()
             cr_id = cr_resp.get('id')
             if not cr_id: return {'status': 'error', 'error': f"Creative Fail: {cr_resp}"}
             
             # 5. Ad
             ad_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={
-                'name': f"{name_base}-Ad",
-                'adset_id': as_id,
-                'creative': json.dumps({'creative_id': cr_id}),
-                'status': 'PAUSED',
-                'access_token': token
+                'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'PAUSED', 'access_token': token
             }).json()
             if 'id' not in ad_resp: return {'status': 'error', 'error': f"Ad Fail: {ad_resp}"}
 
@@ -134,6 +111,4 @@ class CampaignManager:
         except: return False
 
     def get_yesterday_insights(self): return {}
-    def get_historical_insights(self, days=7): return {}
     def evaluate_optimization_rules(self, camps, ins, hist): return []
-    def execute_action(self, act): return False

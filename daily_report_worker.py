@@ -39,7 +39,19 @@ def run_job(is_test=False):
     total_install = sum(ins.get('installs', 0) for ins in insights.values())
     avg_roi = sum(ins.get('roi', 0) for ins in insights.values()) / len(insights) if insights else 0
     
-    # 5. 组装 Markdown 消息
+    # 5. 获取局域网 IP 并组装 Markdown 消息
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except:
+        local_ip = "localhost"
+    
+    port = os.getenv('STREAMLIT_SERVER_PORT', '8501')
+    dashboard_url = f"http://{local_ip}:{port}"
+
     msg = f"### 📊 Meta ADS 每日优化日报 ({datetime.now().strftime('%m-%d')})\n\n"
     msg += f"#### 📈 昨日战况汇总\n"
     msg += f"- **总消耗**: `${total_spend:,.2f}`\n"
@@ -55,7 +67,7 @@ def run_job(is_test=False):
     if pending_list:
         msg += f"#### 🚨 需人工审批建议 ({len(pending_list)}项)\n"
         for item in pending_list: msg += f"- {item}\n"
-        msg += f"\n👉 [点击进入看板进行确认](http://localhost:8501)\n"
+        msg += f"\n👉 [点击进入看板进行确认]({dashboard_url})\n"
     else:
         msg += f"✅ 目前账号状态健康，暂无高风险操作建议。\n"
 

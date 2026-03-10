@@ -220,6 +220,7 @@ class CampaignManager:
             
             # 2. Create Campaign (Set ACTIVE)
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_SALES', 'status': 'ACTIVE', 'access_token': self.access_token}).json()
+            if 'id' not in c_resp: return {'status': 'error', 'error': f"Campaign Error: {c_resp}"}
             c_id = c_resp['id']
             
             # 3. Create AdSet (Set ACTIVE)
@@ -235,15 +236,23 @@ class CampaignManager:
                 'access_token': self.access_token
             }
             as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data=as_payload).json()
+            if 'id' not in as_resp: return {'status': 'error', 'error': f"AdSet Error: {as_resp}"}
             as_id = as_resp.get('id')
             
             # 4. Creative & Ad (Set ACTIVE)
             from skills.copywriter import Copywriter
             writer = Copywriter()
-            copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
+            copy_res = writer.generate_copy(drama_name)
+            copy = copy_res.get('versions', [{}])[0] if isinstance(copy_res, dict) else {}
+            
             story_spec = {'page_id': self.page_id, 'video_data': {'video_id': v_id, 'message': copy.get('primary_text', 'Watch now!')}}
-            cr_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': self.access_token}).json().get('id')
-            ad_id = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'ACTIVE', 'access_token': self.access_token}).json().get('id')
+            cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': self.access_token}).json()
+            if 'id' not in cr_resp: return {'status': 'error', 'error': f"Creative Error: {cr_resp}"}
+            cr_id = cr_resp.get('id')
+            
+            ad_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'ACTIVE', 'access_token': self.access_token}).json()
+            if 'id' not in ad_resp: return {'status': 'error', 'error': f"Ad Error: {ad_resp}"}
+            ad_id = ad_resp.get('id')
             
             return {'status': 'success', 'campaign_id': c_id, 'adset_id': as_id, 'ad_id': ad_id}
         except Exception as e:

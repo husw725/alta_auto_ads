@@ -54,7 +54,11 @@ class CampaignManager:
                     'application_id': self.meta_app_id,
                     'object_store_url': self.official_store_url # 必须与 ID 1807... 一致
                 }),
-                'targeting': json.dumps({'geo_locations': {'countries': [cfg.get('country', 'US')]}, 'device_platforms': ['mobile']}),
+                'targeting': json.dumps({
+                    'geo_locations': {'countries': [cfg.get('country', 'US')]}, 
+                    'device_platforms': ['mobile'],
+                    'user_os': ['iOS'] # 必须显式指定操作系统，匹配 iTunes 链接
+                }),
                 'status': 'PAUSED', 'access_token': token
             }
             as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data=as_payload).json()

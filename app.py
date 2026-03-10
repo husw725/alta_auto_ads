@@ -16,7 +16,7 @@ if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块初始化 (带缓存防止重复实例化)
+# 2. 核心模块初始化
 @st.cache_resource
 def get_ads_module(): return AutoMetaADS()
 @st.cache_resource
@@ -25,12 +25,11 @@ def get_campaign_manager(): return CampaignManager()
 ads_module = get_ads_module()
 campaign_manager = get_campaign_manager()
 
-# 3. 辅助函数
+# 3. 辅助函数：全自动配置合并与初始化
 def load_config():
     config_path = 'config/config.json'
     if not os.path.exists('config'): os.makedirs('config')
     
-    # 默认完整配置模板
     default_template = {
         "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
         "strategy": {
@@ -48,16 +47,20 @@ def load_config():
     with open(config_path, 'r') as f:
         user_cfg = json.load(f)
     
-    # 核心修复逻辑：补全缺失的顶级 Key (如 strategy)
+    # 递归补全缺失字段
     updated = False
     for k, v in default_template.items():
         if k not in user_cfg:
             user_cfg[k] = v
             updated = True
+        elif isinstance(v, dict):
+            for sub_k, sub_v in v.items():
+                if sub_k not in user_cfg[k]:
+                    user_cfg[k][sub_k] = sub_v
+                    updated = True
     
     if updated:
         with open(config_path, 'w') as f: json.dump(user_cfg, f, indent=2)
-        
     return user_cfg
 
 def save_config(config):
@@ -89,24 +92,23 @@ if page == "💬 AI 投流助手":
                         if c_res['status'] == 'success': st.success("✅ 已激活投放！")
                         else: st.error(f"❌ 失败: {c_res['error']}")
     
-    if prompt := st.chat_input("输入剧名，例如: '投 FFAS'"):
+    if prompt := st.chat_input("输入剧名..."):
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
-        with st.spinner("🔍 正在查询 XMP 素材..."):
+        with st.spinner("🔍 查询 XMP..."):
             success, result = ads_module.process_request(prompt, enable_campaign=False)
         with st.chat_message("assistant"):
             if success:
-                response = f"### ✅ 找到素材！\n**剧集**：{result['drama']} | **预览**：[点击查看]({result['video_link']})"
+                response = f"### ✅ 找到素材！\n**剧集**：{result['drama']} | [点击预览]({result['video_link']})"
                 st.markdown(response)
                 st.session_state.chat_history.append({"role": "assistant", "content": response, "ad_result": result})
-            else:
-                st.error(f"❌ {result}")
+            else: st.error(f"❌ {result}")
         st.rerun()
 
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     
-    # --- 🤖 智能优化建议区 ---
+    # --- 🤖 智能建议 ---
     st.subheader("🤖 智能优化建议")
     col1, col2 = st.columns([1, 4])
     with col1:
@@ -120,17 +122,17 @@ elif page == "📊 数据看板":
     if st.session_state.pending_actions:
         for i, act in enumerate(st.session_state.pending_actions):
             with st.expander(f"{'🚨' if act.get('high_risk') else '💡'} {act['type']}: {act['name']}", expanded=True):
-                st.write(f"**优化原因**: {act['reason']}")
+                st.write(f"原因: {act['reason']}")
                 if st.button("✅ 批准执行", key=f"exec_{i}"):
                     if campaign_manager.execute_action(act):
                         st.success("指令已下达！")
                         st.session_state.pending_actions.pop(i)
                         st.rerun()
-    else: st.info("暂无待处理的建议，点击‘扫描分析’开始。")
+    else: st.info("暂无待处理建议。")
 
     st.divider()
     
-    # --- 📊 报表数据中心 ---
+    # --- 📊 报表看板 ---
     if st.button("🔄 同步 Meta 详细表现 (昨日)", use_container_width=True):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
@@ -143,7 +145,6 @@ elif page == "📊 数据看板":
         for c in st.session_state.campaign_list:
             cid = c['id']
             ins = insights.get(cid, {})
-            # 时间转换
             raw_time = c.get('start_time', '')
             try:
                 dt_utc = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S%z")
@@ -152,7 +153,7 @@ elif page == "📊 数据看板":
             except: display_time = raw_time
 
             rows.append({
-                "ID": cid, "名称": c['name'], "状态": c['effective_status'], "创建时间": display_time,
+                "ID": cid, "名称": c['name'], "状态": c['effective_status'], "时间": display_time,
                 "花费": ins.get('spend', 0), "预算": c.get('budget', 0), "点击": ins.get('clicks', 0),
                 "CTR": ins.get('ctr', 0), "安装": ins.get('installs', 0), "ROI": ins.get('roi', 0),
                 "CVR": ins.get('cvr', 0), "CPM": ins.get('cpm', 0), "CPC": ins.get('cpc', 0),
@@ -160,55 +161,59 @@ elif page == "📊 数据看板":
             })
         
         df = pd.DataFrame(rows)
-        
-        # --- 恢复：昨日总数据概述面板 ---
-        total_camps = len(df)
-        active_camps = len(df[df['状态'] == 'ACTIVE'])
-        active_pct = (active_camps / total_camps * 100) if total_camps > 0 else 0
-        
-        total_spend = df['花费'].sum()
-        total_install = df['安装'].sum()
-        avg_roi = df[df['花费'] > 0]['ROI'].mean()
-        avg_cpi = total_spend / total_install if total_install > 0 else 0
-        
+        # KPI 汇总
         m1, m2, m3, m4, m5, m6 = st.columns(6)
-        m1.metric("广告总数", f"{total_camps}")
-        m2.metric("激活占比", f"{active_pct:.1f}%", help=f"活跃: {active_camps} / 总数: {total_camps}")
-        m3.metric("昨日总消耗", f"${total_spend:,.2f}")
-        m4.metric("昨日总安装", f"{int(total_install):,}")
-        m5.metric("平均 ROI", f"{avg_roi:.2f}")
-        m6.metric("平均 CPI", f"${avg_cpi:.2f}")
+        m1.metric("广告总数", f"{len(df)}")
+        m2.metric("激活占比", f"{(len(df[df['状态']=='ACTIVE'])/len(df)*100 if len(df)>0 else 0):.1f}%")
+        m3.metric("昨日总消耗", f"${df['花费'].sum():,.2f}")
+        m4.metric("昨日总安装", f"{int(df['安装'].sum()):,}")
+        m5.metric("平均 ROI", f"{df[df['花费']>0]['ROI'].mean():.2f}")
+        m6.metric("平均 CPI", f"${(df['花费'].sum()/df['安装'].sum() if df['安装'].sum()>0 else 0):.2f}")
         
         st.divider()
         st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        # 状态管理区
-        st.subheader("⚙️ 状态管理")
-        for index, row in df.iterrows():
-            c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
-            with c1: st.write(f"**{row['名称']}**")
-            with c2: st.caption(f"ID: `{row['ID']}` | 状态: `{row['状态']}`")
-            with c3:
-                if st.button("🟢 激活", key=f"on_{row['ID']}", disabled=(row['状态']=="ACTIVE")):
-                    if campaign_manager.update_campaign_status(row['ID'], "ACTIVE"): st.rerun()
-            with c4:
-                if st.button("🟡 暂停", key=f"off_{row['ID']}", disabled=(row['状态']=="PAUSED")):
-                    if campaign_manager.update_campaign_status(row['ID'], "PAUSED"): st.rerun()
 
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    with st.expander("🤖 智能优化阈值", expanded=True):
+    
+    # 模块 1: 投流基础设置 (恢复)
+    with st.expander("🚀 投流基础策略", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
-            cpi_t = st.number_input("CPI 阈值 ($)", value=float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
-            roi_t = st.number_input("ROI 目标", value=float(config['strategy'].get('ROI_THRESHOLD', 0.5)))
+            d_country = st.selectbox("默认投放国家", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"], 
+                                     index=["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"].index(config['default'].get('country', 'US')))
+            d_budget = st.number_input("默认每日预算 ($)", value=int(config['default'].get('daily_budget', 50)), min_value=10)
         with c2:
-            high_s = st.number_input("高消耗报警线 ($)", value=float(config['strategy'].get('HIGH_SPEND_LIMIT', 200.0)))
-            adj_l = st.number_input("大幅调整警戒线 ($)", value=float(config['strategy'].get('ADJUST_LIMIT_VALUE', 100.0)))
-        if st.button("💾 保存配置", type="primary"):
+            d_goal = st.selectbox("默认优化目标", ["MOBILE_APP_INSTALLS", "CONTENT_VIEW"], 
+                                  index=0 if config['default'].get('optimization_goal') == "MOBILE_APP_INSTALLS" else 1)
+        if st.button("💾 保存基础配置"):
+            config['default'].update({"country": d_country, "daily_budget": d_budget, "optimization_goal": d_goal})
+            save_config(config)
+            st.success("✅ 基础配置已更新！")
+
+    # 模块 2: 智能优化策略
+    with st.expander("🤖 智能优化阈值", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            cpi_t = st.number_input("CPI 阈值 ($)", value=float(config['strategy'].get('CPI_THRESHOLD', 2.0)), step=0.1)
+            roi_t = st.number_input("ROI 目标值", value=float(config['strategy'].get('ROI_THRESHOLD', 0.5)), step=0.1)
+        with c2:
+            high_s = st.number_input("高消耗报警线 ($)", value=float(config['strategy'].get('HIGH_SPEND_LIMIT', 200.0)), step=10.0)
+            adj_l = st.number_input("大幅调整警戒线 ($)", value=float(config['strategy'].get('ADJUST_LIMIT_VALUE', 100.0)), step=10.0)
+        if st.button("💾 保存智能策略", type="primary"):
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "ROI_THRESHOLD": roi_t, "HIGH_SPEND_LIMIT": high_s, "ADJUST_LIMIT_VALUE": adj_l})
             save_config(config)
-            st.success("配置已保存！")
+            st.success("✅ 智能策略参数已更新！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8.1 | 稳定版</div>", unsafe_allow_html=True)
+    # 模块 3: 日报推送设置 (恢复)
+    with st.expander("📅 定时日报推送", expanded=False):
+        enabled = st.toggle("开启推送", value=config['report'].get('enabled', True))
+        webhook = st.text_input("Webhook 地址", value=config['report'].get('webhook_url', ''))
+        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:00'))
+        if st.button("💾 保存日报配置"):
+            config['report'].update({"enabled": enabled, "webhook_url": webhook, "send_time": send_time})
+            save_config(config)
+            st.success("✅ 日报配置已保存！")
+
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8.2 | 生产力加固版</div>", unsafe_allow_html=True)

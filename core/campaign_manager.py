@@ -78,8 +78,8 @@ class CampaignManager:
                 print(f"🚀 使用 URL 直接保底: {thumb_url}")
                 video_data['image_url'] = thumb_url # 没 Hash 就直接传 URL，省去上传步骤
             else:
-                # 最终兜底链接
-                video_data['image_url'] = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
+                # 🚀 最终保底：使用搜索发现的官方高清封面
+                video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
             # 4. 创建流程
             c_id = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': 5000, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json().get('id')

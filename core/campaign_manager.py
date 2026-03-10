@@ -1,13 +1,13 @@
 import os
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class CampaignManager:
-    """管理 Meta ADS Campaign 的创建、监控、修改与深度效果分析"""
+    """管理 Meta ADS Campaign 的创建、监控、修改与深度效果分析 (智能优化版)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -18,12 +18,152 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
         self.media_buyer = "Auto ADS"
 
-    def _load_dynamic_config(self):
+    def _load_config(self):
         try:
             with open('config/config.json', 'r') as f:
-                return json.load(f).get('default', {})
+                return json.load(f)
         except:
-            return {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"}
+            return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0}}
+
+    def get_historical_insights(self, days=7):
+        """抓取过去几天的每日数据，用于趋势分析"""
+        try:
+            url = f"{self.base_url}/{self.ad_account_id}/insights"
+            params = {
+                'level': 'campaign',
+                'time_range': json.dumps({'since': (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'), 'until': datetime.now().strftime('%Y-%m-%d')}),
+                'time_increment': 1, # 按天切分
+                'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas',
+                'access_token': self.access_token,
+                'limit': 500
+            }
+            resp = requests.get(url, params=params).json()
+            history = {} # {cid: [day1_data, day2_data, ...]}
+            if 'data' in resp:
+                for item in resp['data']:
+                    cid = item['campaign_id']
+                    if cid not in history: history[cid] = []
+                    
+                    # 基础计算
+                    spend = float(item.get('spend', 0))
+                    installs = 0
+                    if 'actions' in item:
+                        for action in item['actions']:
+                            if action['action_type'] == 'mobile_app_install': installs += int(action['value'])
+                    
+                    history[cid].append({
+                        'date': item.get('date_start'),
+                        'spend': spend,
+                        'imps': int(item.get('impressions', 0)),
+                        'installs': installs,
+                        'cpi': spend / installs if installs > 0 else 0
+                    })
+            return history
+        except:
+            return {}
+
+    def get_all_campaigns(self):
+        """获取所有 Campaign 及其详细出价/预算信息"""
+        try:
+            # 加入 adsets 信息获取以拿到出价详情
+            url = f"{self.base_url}/{self.ad_account_id}/adsets"
+            params = {
+                'fields': 'name,status,effective_status,campaign_id,daily_budget,lifetime_budget,bid_amount,billing_event,optimization_goal',
+                'access_token': self.access_token,
+                'limit': 100
+            }
+            resp = requests.get(url, params=params).json()
+            adsets_map = {}
+            if 'data' in resp:
+                for item in resp['data']:
+                    db = float(item.get('daily_budget', 0)) / 100
+                    lb = float(item.get('lifetime_budget', 0)) / 100
+                    adsets_map[item['campaign_id']] = {
+                        'adset_id': item['id'],
+                        'budget': db if db > 0 else lb,
+                        'bid': float(item.get('bid_amount', 0)) / 100
+                    }
+            
+            # 获取 Campaign 基础信息
+            url = f"{self.base_url}/{self.ad_account_id}/campaigns"
+            params = {'fields': 'name,status,effective_status,start_time', 'access_token': self.access_token, 'limit': 100}
+            c_resp = requests.get(url, params=params).json()
+            final_list = []
+            if 'data' in c_resp:
+                for c in c_resp['data']:
+                    info = adsets_map.get(c['id'], {'budget': 0, 'bid': 0, 'adset_id': None})
+                    c.update(info)
+                    final_list.append(c)
+            return sorted(final_list, key=lambda x: x.get('start_time', '0'), reverse=True)
+        except:
+            return []
+
+    def evaluate_optimization_rules(self, campaigns, insights, history):
+        """核心规则引擎：评估每一条广告是否触发优化动作"""
+        cfg = self._load_config()
+        strat = cfg.get('strategy', {})
+        threshold = strat.get('CPI_THRESHOLD', 2.0)
+        roi_target = strat.get('ROI_THRESHOLD', 0.5)
+        min_spend = strat.get('MIN_SPEND_FOR_JUDGE', 10.0)
+        
+        actions = []
+        for c in campaigns:
+            cid = c['id']
+            aid = c.get('adset_id')
+            name = c['name']
+            if not aid or c['effective_status'] != 'ACTIVE': continue
+            
+            ins = insights.get(cid, {})
+            spend = ins.get('spend', 0)
+            cpi = ins.get('cpi', 0)
+            roi = ins.get('roi', 0)
+            h_data = history.get(cid, [])
+            
+            # --- 规则 1: 暂停劣质 ---
+            if cpi > threshold and spend > 50:
+                actions.append({'type': 'PAUSE', 'cid': cid, 'name': name, 'reason': f"CPI (${cpi:.2f}) > 阈值且花费 > $50", 'high_risk': spend > 200})
+            
+            # --- 规则 2: 降低预算 (50%) ---
+            elif cpi > (threshold * 0.8) and spend > 30:
+                new_b = c['budget'] * 0.5
+                actions.append({'type': 'BUDGET', 'cid': cid, 'aid': aid, 'name': name, 'value': new_b, 'reason': f"CPI (${cpi:.2f}) 偏高，降低预算至 ${new_b:.2f}", 'high_risk': abs(new_b - c['budget']) > 100})
+            
+            # --- 规则 3: 提升预算 (30%) ---
+            elif cpi < (threshold * 0.6) and roi > (roi_target * 1.2) and spend > min_spend:
+                new_b = c['budget'] * 1.3
+                actions.append({'type': 'BUDGET', 'cid': cid, 'aid': aid, 'name': name, 'value': new_b, 'reason': f"表现优异 (CPI:${cpi:.2f}, ROI:{roi:.2f})，提升预算至 ${new_b:.2f}", 'high_risk': abs(new_b - c['budget']) > 100})
+
+            # --- 规则 4: 调低出价 (10%) ---
+            # 持续 3 天高于阈值
+            if len(h_data) >= 3 and all(d['cpi'] > threshold for d in h_data[-3:]):
+                curr_bid = c['bid'] if c['bid'] > 0 else (threshold * 0.8) # 兜底出价计算
+                new_bid = curr_bid * 0.9
+                actions.append({'type': 'BID', 'cid': cid, 'aid': aid, 'name': name, 'value': new_bid, 'reason': "CPI 连续 3 天高于阈值，调低出价 10%"})
+
+            # --- 规则 5: 调高出价 (10%) ---
+            # 展示量持续下降超过 30% (对比前天 vs 昨天)
+            if len(h_data) >= 2:
+                yest_imps = h_data[-1]['imps']
+                before_imps = h_data[-2]['imps']
+                if before_imps > 0 and (before_imps - yest_imps) / before_imps > 0.3:
+                    curr_bid = c['bid'] if c['bid'] > 0 else (threshold * 0.8)
+                    new_bid = curr_bid * 1.1
+                    actions.append({'type': 'BID', 'cid': cid, 'aid': aid, 'name': name, 'value': new_bid, 'reason': "展示量下降 > 30%，调高出价 10%"})
+
+        return actions
+
+    def execute_action(self, action):
+        """执行最终动作"""
+        try:
+            token = self.access_token
+            if action['type'] == 'PAUSE':
+                return requests.post(f"{self.base_url}/{action['cid']}", data={'status': 'PAUSED', 'access_token': token}).json().get('success', False)
+            elif action['type'] == 'BUDGET':
+                return requests.post(f"{self.base_url}/{action['aid']}", data={'daily_budget': int(action['value'] * 100), 'access_token': token}).json().get('success', False)
+            elif action['type'] == 'BID':
+                return requests.post(f"{self.base_url}/{action['aid']}", data={'bid_amount': int(action['value'] * 100), 'access_token': token}).json().get('success', False)
+        except:
+            return False
 
     def get_yesterday_insights(self):
         """获取昨日全维度深度数据"""
@@ -32,7 +172,7 @@ class CampaignManager:
             params = {
                 'level': 'campaign',
                 'date_preset': 'yesterday',
-                'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas,cpm,cpp,cpp_conversions',
+                'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas,cpm',
                 'access_token': self.access_token,
                 'limit': 100
             }
@@ -44,76 +184,28 @@ class CampaignManager:
                     spend = float(item.get('spend', 0))
                     imps = int(item.get('impressions', 0))
                     clicks = int(item.get('inline_link_clicks', 0))
-                    
-                    # 转化数据提取
                     installs = 0
-                    purchases = 0
                     if 'actions' in item:
                         for action in item['actions']:
-                            if action['action_type'] == 'mobile_app_install':
-                                installs += int(action['value'])
-                            if action['action_type'] in ['purchase', 'offsite_conversion.fb_pixel_purchase']:
-                                purchases += int(action['value'])
-                    
-                    # ROI 提取
+                            if action['action_type'] == 'mobile_app_install': installs += int(action['value'])
                     roi = 0
-                    if 'purchase_roas' in item:
-                        roi = float(item['purchase_roas'][0]['value']) if item['purchase_roas'] else 0
+                    if 'purchase_roas' in item: roi = float(item['purchase_roas'][0]['value']) if item['purchase_roas'] else 0
 
                     insights_map[cid] = {
-                        'spend': spend,
-                        'imps': imps,
-                        'clicks': clicks,
-                        'installs': installs,
-                        'purchases': purchases,
-                        'roi': roi,
-                        'ctr': (clicks / imps) if imps > 0 else 0,
+                        'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': installs,
+                        'roi': roi, 'ctr': (clicks / imps) if imps > 0 else 0,
                         'cvr': (installs / clicks) if clicks > 0 else 0,
-                        'cpm': float(item.get('cpm', 0)),
-                        'cpc': (spend / clicks) if clicks > 0 else 0,
-                        'cpi': (spend / installs) if installs > 0 else 0,
-                        'cpp': (spend / purchases) if purchases > 0 else 0
+                        'cpi': (spend / installs) if installs > 0 else 0
                     }
             return insights_map
-        except Exception as e:
-            print(f"Error insights: {e}")
+        except:
             return {}
-
-    def get_all_campaigns(self):
-        """获取所有 Campaign 及其预算信息"""
-        try:
-            url = f"{self.base_url}/{self.ad_account_id}/campaigns"
-            params = {
-                'fields': 'name,status,effective_status,start_time,daily_budget,lifetime_budget',
-                'access_token': self.access_token,
-                'limit': 50
-            }
-            resp = requests.get(url, params=params).json()
-            if 'data' in resp:
-                data = resp['data']
-                for item in data:
-                    # 统一处理预算
-                    db = float(item.get('daily_budget', 0)) / 100
-                    lb = float(item.get('lifetime_budget', 0)) / 100
-                    item['budget'] = db if db > 0 else lb
-                return sorted(data, key=lambda x: x.get('start_time', '0'), reverse=True)
-            return []
-        except:
-            return []
-
-    def update_campaign_status(self, campaign_id, status):
-        """修改状态"""
-        try:
-            url = f"{self.base_url}/{campaign_id}"
-            params = {'status': status, 'access_token': self.access_token}
-            return requests.post(url, data=params).json().get('success', False)
-        except:
-            return False
 
     def create_campaign(self, drama_name, video_url):
         """创建 Campaign (默认直接激活)"""
         try:
-            cfg = self._load_dynamic_config()
+            cfg_full = self._load_config()
+            cfg = cfg_full.get('default', {})
             country = cfg.get('country', 'US')
             budget = cfg.get('daily_budget', 50.0)
             goal = cfg.get('optimization_goal', 'MOBILE_APP_INSTALLS')

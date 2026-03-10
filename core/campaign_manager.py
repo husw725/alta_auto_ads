@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v2.2.0: 真实剧名溯源版"""
+    """Meta ADS 管理器 v2.2.1: 精准剧名剥离版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -21,23 +21,42 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _extract_real_name_from_url(self, video_url):
-        """[核心加固] 从视频 URL 提取真实的剧集名称"""
+        """[增强] 从复杂的 xxx_dramaname_xx_x 结构中精准剥离剧名"""
         try:
-            # 1. 获取文件名 (e.g., CEO_Mistaken_Lover_V1.mp4)
             filename = unquote(video_url.split('/')[-1])
-            # 2. 去掉后缀和常见的版本标签
-            clean_name = re.sub(r'\.(mp4|mov|mkv)$', '', filename, flags=re.IGNORECASE)
-            clean_name = re.sub(r'(_V\d+|_v\d+|_\d+fps|_\d+p|_\d+m)$', '', clean_name)
-            # 3. 将下划线/连字符替换为空格
-            real_name = clean_name.replace('_', ' ').replace('-', ' ').strip()
-            # 4. 如果太短，则回退回原始 drama_name (逻辑见 create_campaign)
-            return real_name if len(real_name) > 3 else None
+            # 1. 移除后缀
+            name = re.sub(r'\.(mp4|mov|mkv)$', '', filename, flags=re.IGNORECASE)
+            # 2. 按下划线拆分
+            parts = re.split(r'[_\-\s]+', name)
+            
+            # 3. 黑名单过滤（不属于剧名的常见片段）
+            blacklist = {
+                'v1', 'v2', 'v3', 'eng', 'english', '1080p', '720p', '60fps', '30fps', 
+                'pt', 'es', 'espanol', 'short', 'final', 'fixed', 'export'
+            }
+            
+            clean_parts = []
+            for p in parts:
+                # 过滤日期 (8位数字)
+                if re.match(r'^\d{4}\d{2}\d{2}$', p) or re.match(r'^\d{8}$', p): continue
+                # 过滤纯数字 (通常是 ID 或版本)
+                if p.isdigit() and len(p) < 4: continue
+                # 过滤黑名单
+                if p.lower() in blacklist: continue
+                clean_parts.append(p)
+            
+            # 4. 重新组合
+            result = " ".join(clean_parts).strip()
+            
+            # 5. 进一步尝试拆分驼峰式命名 (如 MistakenLover -> Mistaken Lover)
+            result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
+            
+            return result if len(result) > 2 else None
         except: return None
 
     def _scrape_poster_from_web(self, drama_name):
         """从 altatv.com 抓取海报"""
         try:
-            # 编码剧名，确保 URL 安全
             search_key = drama_name.replace(' ', '+')
             url = f"https://altatv.com/search?keywords={search_key}&type=1"
             headers = {"User-Agent": "Mozilla/5.0"}
@@ -63,9 +82,9 @@ class CampaignManager:
     def create_campaign(self, drama_name, video_url, thumb_url=None):
         try:
             token = self.access_token
-            # 🚀 优先从 URL 溯源真实剧名，用于更精准的海报搜索
-            real_name_from_url = self._extract_real_name_from_url(video_url)
-            search_name = real_name_from_url if real_name_from_url else drama_name
+            # 🚀 精准剥离真实剧名
+            real_name = self._extract_real_name_from_url(video_url)
+            search_name = real_name if real_name else drama_name
             
             name_base = f"{search_name}-{datetime.now().strftime('%m%d%H%M')}"
 
@@ -78,10 +97,8 @@ class CampaignManager:
             img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
             
             if not img_hash:
-                # 尝试用从 URL 提取的真实名称进行“精准搜索”
                 poster_url = self._scrape_poster_from_web(search_name)
                 final_img_url = poster_url if poster_url else "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
-                
                 img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': final_img_url, 'access_token': token}).json()
                 if 'images' in img_res:
                     img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash']

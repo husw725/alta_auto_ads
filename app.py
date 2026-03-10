@@ -4,16 +4,26 @@ from core.campaign_manager import CampaignManager
 import os
 import pandas as pd
 import json
+import pytz
+from datetime import datetime
 
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 智能投放中心", page_icon="🤖", layout="wide")
 
 # 1. 状态初始化
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
+if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
+if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块初始化
-ads_module = AutoMetaADS()
-campaign_manager = CampaignManager()
+# 2. 核心模块初始化 (带缓存防止重复实例化)
+@st.cache_resource
+def get_ads_module(): return AutoMetaADS()
+@st.cache_resource
+def get_campaign_manager(): return CampaignManager()
+
+ads_module = get_ads_module()
+campaign_manager = get_campaign_manager()
 
 # 3. 辅助函数
 def load_config():
@@ -48,77 +58,119 @@ with st.sidebar:
 # 5. 主区域内容
 if page == "💬 AI 投流助手":
     st.title("💬 AI 投流助手")
-    # (AI 助手逻辑，保持不变)
-    if prompt := st.chat_input("输入剧名..."):
-        success, result = ads_module.process_request(prompt, enable_campaign=False)
-        if success:
-            st.success(f"找到视频: {result['drama']}")
-            if st.button("🚀 启动并激活 Campaign"):
-                res = campaign_manager.create_campaign(result['drama'], result['video_link'])
-                st.write(res)
+    for i, chat in enumerate(st.session_state.chat_history):
+        with st.chat_message(chat["role"]):
+            st.markdown(chat["content"])
+            if chat.get("ad_result"):
+                res = chat["ad_result"]
+                with st.form(f"form_{i}"):
+                    st.write(f"确认投流: **{res['drama']}**")
+                    if st.form_submit_button("🚀 启动并激活 Campaign"):
+                        with st.spinner("🚀 创建中..."):
+                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'])
+                        if c_res['status'] == 'success': st.success("✅ 已激活投放！")
+                        else: st.error(f"❌ 失败: {c_res['error']}")
+    
+    if prompt := st.chat_input("输入剧名，例如: '投 FFAS'"):
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.markdown(prompt)
+        with st.spinner("🔍 正在查询 XMP 素材..."):
+            success, result = ads_module.process_request(prompt, enable_campaign=False)
+        with st.chat_message("assistant"):
+            if success:
+                response = f"### ✅ 找到素材！\n**剧集**：{result['drama']} | **预览**：[点击查看]({result['video_link']})"
+                st.markdown(response)
+                st.session_state.chat_history.append({"role": "assistant", "content": response, "ad_result": result})
+            else:
+                st.error(f"❌ {result}")
+        st.rerun()
 
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     
-    # --- 智能优化建议区 ---
-    st.subheader("🤖 智能优化建议 (需人工干预)")
-    if st.button("🔍 扫描并生成优化建议"):
-        with st.spinner("正在分析历史趋势与当前表现..."):
-            camps = campaign_manager.get_all_campaigns()
-            ins = campaign_manager.get_yesterday_insights()
-            hist = campaign_manager.get_historical_insights()
-            st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(camps, ins, hist)
+    # --- 🤖 智能优化建议区 ---
+    st.subheader("🤖 智能优化建议")
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔍 扫描分析账号", type="primary", use_container_width=True):
+            with st.spinner("分析历史趋势中..."):
+                camps = campaign_manager.get_all_campaigns()
+                ins = campaign_manager.get_yesterday_insights()
+                hist = campaign_manager.get_historical_insights()
+                st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(camps, ins, hist)
     
     if st.session_state.pending_actions:
         for i, act in enumerate(st.session_state.pending_actions):
-            with st.expander(f"{'🚨' if act.get('high_risk') else '💡'} {act['type']} 建议: {act['name']}", expanded=True):
-                st.write(f"**原因**: {act['reason']}")
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    if act.get('high_risk'): st.warning("⚠️ 此操作涉及高额消耗或大幅度调整，请仔细核对。")
-                with col2:
-                    if st.button("✅ 确认执行", key=f"exec_{i}", type="primary" if act.get('high_risk') else "secondary"):
-                        if campaign_manager.execute_action(act):
-                            st.success("执行成功！")
-                            st.session_state.pending_actions.pop(i)
-                            st.rerun()
-    else:
-        st.info("暂无待处理的优化建议。")
+            with st.expander(f"{'🚨' if act.get('high_risk') else '💡'} {act['type']}: {act['name']}", expanded=True):
+                st.write(f"**优化原因**: {act['reason']}")
+                if st.button("✅ 批准执行", key=f"exec_{i}"):
+                    if campaign_manager.execute_action(act):
+                        st.success("指令已下达！")
+                        st.session_state.pending_actions.pop(i)
+                        st.rerun()
+    else: st.info("暂无待处理的建议，点击‘扫描分析’开始。")
 
     st.divider()
     
-    # --- 数据中心表格 ---
-    if st.button("🔄 同步 Meta 深度数据", use_container_width=True):
+    # --- 📊 报表数据中心 ---
+    if st.button("🔄 同步 Meta 详细表现 (昨日)", use_container_width=True):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
 
-    if 'campaign_list' in st.session_state:
-        # (报表渲染逻辑，包含您之前要求的 15 个字段，略)
-        st.dataframe(pd.DataFrame(st.session_state.campaign_list)) # 简版展示示例
+    if st.session_state.campaign_list:
+        rows = []
+        insights = st.session_state.yesterday_insights
+        tz_beijing = pytz.timezone('Asia/Shanghai')
+
+        for c in st.session_state.campaign_list:
+            cid = c['id']
+            ins = insights.get(cid, {})
+            # 时间转换
+            raw_time = c.get('start_time', '')
+            try:
+                dt_utc = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S%z")
+                dt_beijing = dt_utc.astimezone(tz_beijing)
+                display_time = dt_beijing.strftime("%m-%d %H:%M")
+            except: display_time = raw_time
+
+            rows.append({
+                "ID": cid, "名称": c['name'], "状态": c['effective_status'], "创建时间": display_time,
+                "花费": ins.get('spend', 0), "预算": c.get('budget', 0), "点击": ins.get('clicks', 0),
+                "CTR": ins.get('ctr', 0), "安装": ins.get('installs', 0), "ROI": ins.get('roi', 0),
+                "CVR": ins.get('cvr', 0), "CPM": ins.get('cpm', 0), "CPC": ins.get('cpc', 0),
+                "CPI": ins.get('cpi', 0), "CPP": ins.get('cpp', 0)
+            })
+        
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # 状态管理区
+        st.subheader("⚙️ 状态管理")
+        for index, row in df.iterrows():
+            c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
+            with c1: st.write(f"**{row['名称']}**")
+            with c2: st.caption(f"ID: `{row['ID']}` | 状态: `{row['状态']}`")
+            with c3:
+                if st.button("🟢 激活", key=f"on_{row['ID']}", disabled=(row['状态']=="ACTIVE")):
+                    if campaign_manager.update_campaign_status(row['ID'], "ACTIVE"): st.rerun()
+            with c4:
+                if st.button("🟡 暂停", key=f"off_{row['ID']}", disabled=(row['状态']=="PAUSED")):
+                    if campaign_manager.update_campaign_status(row['ID'], "PAUSED"): st.rerun()
 
 elif page == "⚙️ 系统设置":
-    st.title("⚙️ 系统与智能策略配置")
+    st.title("⚙️ 系统与策略配置")
     config = load_config()
-    
-    with st.expander("🤖 自动化策略阈值设置", expanded=True):
+    with st.expander("🤖 智能优化阈值", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("##### 判定标准")
-            cpi_t = st.number_input("CPI 阈值 ($)", value=float(config['strategy'].get('CPI_THRESHOLD', 2.0)), step=0.1)
-            roi_t = st.number_input("ROI 目标值", value=float(config['strategy'].get('ROI_THRESHOLD', 0.5)), step=0.1)
-            min_s = st.number_input("起评花费 ($)", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)), step=1.0)
+            cpi_t = st.number_input("CPI 阈值 ($)", value=float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
+            roi_t = st.number_input("ROI 目标", value=float(config['strategy'].get('ROI_THRESHOLD', 0.5)))
         with c2:
-            st.markdown("##### 干预界限")
-            high_s = st.number_input("高消耗报警线 ($)", value=float(config['strategy'].get('HIGH_SPEND_LIMIT', 200.0)), step=10.0)
-            adj_l = st.number_input("大幅预算调整线 ($)", value=float(config['strategy'].get('ADJUST_LIMIT_VALUE', 100.0)), step=10.0)
-            
-        if st.button("💾 保存策略配置", type="primary"):
-            config['strategy']['CPI_THRESHOLD'] = cpi_t
-            config['strategy']['ROI_THRESHOLD'] = roi_t
-            config['strategy']['MIN_SPEND_FOR_JUDGE'] = min_s
-            config['strategy']['HIGH_SPEND_LIMIT'] = high_s
-            config['strategy']['ADJUST_LIMIT_VALUE'] = adj_l
+            high_s = st.number_input("高消耗报警线 ($)", value=float(config['strategy'].get('HIGH_SPEND_LIMIT', 200.0)))
+            adj_l = st.number_input("大幅调整警戒线 ($)", value=float(config['strategy'].get('ADJUST_LIMIT_VALUE', 100.0)))
+        if st.button("💾 保存配置", type="primary"):
+            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "ROI_THRESHOLD": roi_t, "HIGH_SPEND_LIMIT": high_s, "ADJUST_LIMIT_VALUE": adj_l})
             save_config(config)
-            st.success("✅ 策略参数已更新！")
+            st.success("配置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8 | 智能投放助手</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8.1 | 稳定版</div>", unsafe_allow_html=True)

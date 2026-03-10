@@ -7,60 +7,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """管理 Meta ADS Campaign 的创建、监控、修改与深度效果分析 (智能优化版)"""
+    """管理 Meta ADS Campaign 的创建、监控、修改与深度效果分析 (智能优化加固版)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
         self.ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
         self.page_id = os.getenv('META_PAGE_ID')
         self.pixel_id = os.getenv('META_PIXEL_ID')
-        self.app_link = os.getenv('APP_DOWNLOAD_LINK')
+        self.app_link = os.getenv('META_APP_LINK') # 修正为 .env 中的字段名
         self.base_url = "https://graph.facebook.com/v21.0"
         self.media_buyer = "Auto ADS"
 
     def _load_config(self):
         try:
-            with open('config/config.json', 'r') as f:
-                return json.load(f)
-        except:
-            return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0}}
-
-    def get_all_campaigns(self):
-        """获取所有 Campaign 及其详细出价/预算信息"""
-        try:
-            url = f"{self.base_url}/{self.ad_account_id}/adsets"
-            params = {'fields': 'name,status,effective_status,campaign_id,daily_budget,lifetime_budget,bid_amount', 'access_token': self.access_token, 'limit': 100}
-            resp = requests.get(url, params=params).json()
-            adsets_map = {}
-            if 'data' in resp:
-                for item in resp['data']:
-                    db = float(item.get('daily_budget', 0)) / 100
-                    lb = float(item.get('lifetime_budget', 0)) / 100
-                    adsets_map[item['campaign_id']] = {'adset_id': item['id'], 'budget': db if db > 0 else lb, 'bid': float(item.get('bid_amount', 0)) / 100}
-            
-            url = f"{self.base_url}/{self.ad_account_id}/campaigns"
-            params = {'fields': 'name,status,effective_status,start_time', 'access_token': self.access_token, 'limit': 100}
-            c_resp = requests.get(url, params=params).json()
-            final_list = []
-            if 'data' in c_resp:
-                for c in c_resp['data']:
-                    info = adsets_map.get(c['id'], {'budget': 0, 'bid': 0, 'adset_id': None})
-                    c.update(info)
-                    final_list.append(c)
-            return sorted(final_list, key=lambda x: x.get('start_time', '0'), reverse=True)
-        except: return []
-
-    def update_campaign_status(self, campaign_id, status):
-        """修改状态"""
-        try:
-            url = f"{self.base_url}/{campaign_id}"
-            params = {'status': status, 'access_token': self.access_token}
-            return requests.post(url, data=params).json().get('success', False)
-        except: return False
+            with open('config/config.json', 'r') as f: return json.load(f)
+        except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0}}
 
     def create_campaign(self, drama_name, video_url):
         """创建 Campaign (采用两阶段法：创建 -> 激活)"""
         try:
+            if not video_url: return {'status': 'error', 'error': 'No video URL provided'}
+            
             cfg_full = self._load_config()
             cfg = cfg_full.get('default', {})
             country = cfg.get('country', 'US')
@@ -76,7 +43,7 @@ class CampaignManager:
             if 'id' not in v_resp: return {'status': 'error', 'error': f"Video Upload Fail: {v_resp}"}
             v_id = v_resp['id']
             
-            # 2. Step 1: Create as PAUSED (More stable)
+            # 2. Step 1: Create as PAUSED
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_SALES', 'status': 'PAUSED', 'access_token': token}).json()
             if 'id' not in c_resp: return {'status': 'error', 'error': f"Campaign Create Fail: {c_resp}"}
             c_id = c_resp['id']
@@ -106,22 +73,49 @@ class CampaignManager:
             if 'id' not in ad_resp: return {'status': 'error', 'error': f"Ad Create Fail: {ad_resp}"}
             ad_id = ad_resp['id']
 
-            # 3. Step 2: Auto Activate after creation
-            print(f"✅ Created {c_id}, now activating...")
+            # 3. Step 2: Auto Activate
             requests.post(f"{self.base_url}/{c_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{as_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{ad_id}", data={'status': 'ACTIVE', 'access_token': token})
             
             return {'status': 'success', 'campaign_id': c_id}
         except Exception as e:
-            import traceback
-            return {'status': 'error', 'error': f"Runtime Error: {str(e)}\n{traceback.format_exc()}"}
+            return {'status': 'error', 'error': f"Exception: {str(e)}"}
 
-    # (其他 get_yesterday_insights 等方法保持不变，略)
+    def get_all_campaigns(self):
+        try:
+            url = f"{self.base_url}/{self.ad_account_id}/adsets"
+            params = {'fields': 'name,status,effective_status,campaign_id,daily_budget,lifetime_budget,bid_amount', 'access_token': self.access_token, 'limit': 100}
+            resp = requests.get(url, params=params).json()
+            adsets_map = {}
+            if 'data' in resp:
+                for item in resp['data']:
+                    db = float(item.get('daily_budget', 0)) / 100
+                    lb = float(item.get('lifetime_budget', 0)) / 100
+                    adsets_map[item['campaign_id']] = {'adset_id': item['id'], 'budget': db if db > 0 else lb, 'bid': float(item.get('bid_amount', 0)) / 100}
+            url = f"{self.base_url}/{self.ad_account_id}/campaigns"
+            params = {'fields': 'name,status,effective_status,start_time', 'access_token': self.access_token, 'limit': 100}
+            c_resp = requests.get(url, params=params).json()
+            final_list = []
+            if 'data' in c_resp:
+                for c in c_resp['data']:
+                    info = adsets_map.get(c['id'], {'budget': 0, 'bid': 0, 'adset_id': None})
+                    c.update(info)
+                    final_list.append(c)
+            return sorted(final_list, key=lambda x: x.get('start_time', '0'), reverse=True)
+        except: return []
+
+    def update_campaign_status(self, campaign_id, status):
+        try:
+            url = f"{self.base_url}/{campaign_id}"
+            params = {'status': status, 'access_token': self.access_token}
+            return requests.post(url, data=params).json().get('success', False)
+        except: return False
+
     def get_yesterday_insights(self):
         try:
             url = f"{self.base_url}/{self.ad_account_id}/insights"
-            params = {'level': 'campaign', 'date_preset': 'yesterday', 'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas,cpm', 'access_token': self.access_token, 'limit': 100}
+            params = {'level': 'campaign', 'date_preset': 'yesterday', 'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas', 'access_token': self.access_token, 'limit': 100}
             resp = requests.get(url, params=params).json()
             insights_map = {}
             if 'data' in resp:
@@ -143,9 +137,9 @@ class CampaignManager:
                 for item in resp['data']:
                     cid = item['campaign_id']
                     if cid not in history: history[cid] = []
-                    spend = float(item.get('spend', 0))
+                    spend, imps = float(item.get('spend', 0)), int(item.get('impressions', 0))
                     installs = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
-                    history[cid].append({'date': item.get('date_start'), 'spend': spend, 'imps': int(item.get('impressions', 0)), 'installs': installs, 'cpi': spend / installs if installs > 0 else 0})
+                    history[cid].append({'date': item.get('date_start'), 'spend': spend, 'imps': imps, 'installs': installs, 'cpi': spend/installs if installs>0 else 0})
             return history
         except: return {}
 

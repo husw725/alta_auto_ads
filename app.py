@@ -25,11 +25,10 @@ def get_campaign_manager(): return CampaignManager()
 ads_module = get_ads_module()
 campaign_manager = get_campaign_manager()
 
-# 3. 辅助函数：全自动配置合并与初始化
+# 3. 辅助函数
 def load_config():
     config_path = 'config/config.json'
     if not os.path.exists('config'): os.makedirs('config')
-    
     default_template = {
         "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
         "strategy": {
@@ -37,28 +36,18 @@ def load_config():
             "BUDGET_ADJUST_STEP_UP": 0.3, "BUDGET_ADJUST_STEP_DOWN": 0.5,
             "BID_ADJUST_STEP": 0.1, "HIGH_SPEND_LIMIT": 200.0, "ADJUST_LIMIT_VALUE": 100.0
         },
-        "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
+        "report": {"enabled": True, "send_time": "10:00", "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=c0a2c5dbbabbae8af4f9dbcc7d7877e403fe2d2b1737acdce0f7719520d00671", "last_sent": ""}
     }
-
     if not os.path.exists(config_path):
         with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
         return default_template
-    
-    with open(config_path, 'r') as f:
-        user_cfg = json.load(f)
-    
-    # 递归补全缺失字段
+    with open(config_path, 'r') as f: user_cfg = json.load(f)
     updated = False
     for k, v in default_template.items():
-        if k not in user_cfg:
-            user_cfg[k] = v
-            updated = True
+        if k not in user_cfg: user_cfg[k] = v; updated = True
         elif isinstance(v, dict):
-            for sub_k, sub_v in v.items():
-                if sub_k not in user_cfg[k]:
-                    user_cfg[k][sub_k] = sub_v
-                    updated = True
-    
+            for sk, sv in v.items():
+                if sk not in user_cfg[k]: user_cfg[k][sk] = sv; updated = True
     if updated:
         with open(config_path, 'w') as f: json.dump(user_cfg, f, indent=2)
     return user_cfg
@@ -87,9 +76,9 @@ if page == "💬 AI 投流助手":
                 with st.form(f"form_{i}"):
                     st.write(f"确认投流: **{res['drama']}**")
                     if st.form_submit_button("🚀 启动并激活 Campaign"):
-                        with st.spinner("🚀 创建中..."):
+                        with st.spinner("🚀 创建并激活中..."):
                             c_res = campaign_manager.create_campaign(res['drama'], res['video_link'])
-                        if c_res['status'] == 'success': st.success("✅ 已激活投放！")
+                        if c_res['status'] == 'success': st.success(f"✅ 已激活投放！ID: {c_res['campaign_id']}")
                         else: st.error(f"❌ 失败: {c_res['error']}")
     
     if prompt := st.chat_input("输入剧名..."):
@@ -143,8 +132,7 @@ elif page == "📊 数据看板":
         tz_beijing = pytz.timezone('Asia/Shanghai')
 
         for c in st.session_state.campaign_list:
-            cid = c['id']
-            ins = insights.get(cid, {})
+            cid, ins = c['id'], insights.get(c['id'], {})
             raw_time = c.get('start_time', '')
             try:
                 dt_utc = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S%z")
@@ -173,26 +161,31 @@ elif page == "📊 数据看板":
         st.divider()
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+        # 状态管理
+        st.subheader("⚙️ 状态管理")
+        for index, row in df.iterrows():
+            c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
+            with c1: st.write(f"**{row['名称']}**")
+            with c2: st.caption(f"ID: `{row['ID']}` | 状态: `{row['状态']}`")
+            with c3:
+                if st.button("🟢 激活", key=f"on_{row['ID']}", disabled=(row['状态']=="ACTIVE")):
+                    if campaign_manager.update_campaign_status(row['ID'], "ACTIVE"): st.rerun()
+            with c4:
+                if st.button("🟡 暂停", key=f"off_{row['ID']}", disabled=(row['状态']=="PAUSED")):
+                    if campaign_manager.update_campaign_status(row['ID'], "PAUSED"): st.rerun()
+
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    
-    # 模块 1: 投流基础设置 (恢复)
     with st.expander("🚀 投流基础策略", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
-            d_country = st.selectbox("默认投放国家", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"], 
-                                     index=["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"].index(config['default'].get('country', 'US')))
+            d_country = st.selectbox("默认投放国家", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"], index=["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"].index(config['default'].get('country', 'US')))
             d_budget = st.number_input("默认每日预算 ($)", value=int(config['default'].get('daily_budget', 50)), min_value=10)
         with c2:
-            d_goal = st.selectbox("默认优化目标", ["MOBILE_APP_INSTALLS", "CONTENT_VIEW"], 
-                                  index=0 if config['default'].get('optimization_goal') == "MOBILE_APP_INSTALLS" else 1)
+            d_goal = st.selectbox("默认优化目标", ["MOBILE_APP_INSTALLS", "CONTENT_VIEW"], index=0 if config['default'].get('optimization_goal') == "MOBILE_APP_INSTALLS" else 1)
         if st.button("💾 保存基础配置"):
-            config['default'].update({"country": d_country, "daily_budget": d_budget, "optimization_goal": d_goal})
-            save_config(config)
-            st.success("✅ 基础配置已更新！")
-
-    # 模块 2: 智能优化策略
+            config['default'].update({"country": d_country, "daily_budget": d_budget, "optimization_goal": d_goal}); save_config(config); st.success("✅ 基础配置已更新！")
     with st.expander("🤖 智能优化阈值", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
@@ -202,18 +195,12 @@ elif page == "⚙️ 系统设置":
             high_s = st.number_input("高消耗报警线 ($)", value=float(config['strategy'].get('HIGH_SPEND_LIMIT', 200.0)), step=10.0)
             adj_l = st.number_input("大幅调整警戒线 ($)", value=float(config['strategy'].get('ADJUST_LIMIT_VALUE', 100.0)), step=10.0)
         if st.button("💾 保存智能策略", type="primary"):
-            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "ROI_THRESHOLD": roi_t, "HIGH_SPEND_LIMIT": high_s, "ADJUST_LIMIT_VALUE": adj_l})
-            save_config(config)
-            st.success("✅ 智能策略参数已更新！")
-
-    # 模块 3: 日报推送设置 (恢复)
+            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "ROI_THRESHOLD": roi_t, "HIGH_SPEND_LIMIT": high_s, "ADJUST_LIMIT_VALUE": adj_l}); save_config(config); st.success("✅ 智能策略参数已更新！")
     with st.expander("📅 定时日报推送", expanded=False):
         enabled = st.toggle("开启推送", value=config['report'].get('enabled', True))
         webhook = st.text_input("Webhook 地址", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:00'))
         if st.button("💾 保存日报配置"):
-            config['report'].update({"enabled": enabled, "webhook_url": webhook, "send_time": send_time})
-            save_config(config)
-            st.success("✅ 日报配置已保存！")
+            config['report'].update({"enabled": enabled, "webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 日报配置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8.2 | 生产力加固版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v1.8.3 | 最终稳定性加固版</div>", unsafe_allow_html=True)

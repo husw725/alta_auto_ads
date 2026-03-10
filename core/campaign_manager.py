@@ -20,20 +20,23 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _get_video_thumbnail_hash(self, video_id, token):
-        """[核心加固] 从上传的视频中提取 Meta 官方生成的缩略图 Hash"""
-        try:
-            # 等待 1-2 秒确保 Meta 已经处理出第一帧
-            time.sleep(2)
-            url = f"{self.base_url}/{video_id}"
-            params = {'fields': 'thumbnails', 'access_token': token}
-            res = requests.get(url, params=params).json()
-            
-            # 提取第一个生成的缩略图 Hash
-            if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
-                return res['thumbnails']['data'][0].get('hash')
-            return None
-        except:
-            return None
+        """[深度加固] 循环探测 Meta 官方抽帧状态，确保拿到 image_hash"""
+        for i in range(5): # 最多等待 15 秒
+            try:
+                time.sleep(3) # 每 3 秒探测一次
+                url = f"{self.base_url}/{video_id}"
+                params = {'fields': 'thumbnails', 'access_token': token}
+                res = requests.get(url, params=params).json()
+                
+                if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
+                    h = res['thumbnails']['data'][0].get('hash')
+                    if h:
+                        print(f"✨ 第 {i+1} 次尝试：成功获取 Meta 官方抽帧 Hash: {h}")
+                        return h
+                print(f"⏳ 第 {i+1} 次尝试：Meta 正在抽帧中，继续等待...")
+            except:
+                continue
+        return None
 
     def create_campaign(self, drama_name, video_url, thumb_url=None):
         try:

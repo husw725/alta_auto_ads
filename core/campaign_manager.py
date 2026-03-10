@@ -21,26 +21,38 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _extract_real_name_from_url(self, video_url):
-        """剥离干扰结构，提取剧名"""
+        """[深度剥离] 剔除拼音前缀、中文备注及各种编号"""
         try:
             filename = unquote(video_url.split('/')[-1])
-            name = re.sub(r'[\(\)\[\]\._\-]', ' ', filename)
+            # 1. 彻底移除所有非 ASCII 字符 (如中文：英语、投流等)
+            name = filename.encode('ascii', 'ignore').decode('ascii')
+            # 2. 统一分隔符
+            name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
+            # 3. 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
+            
             parts = name.split()
+            # 4. 增强版动态黑名单
             blacklist = {
                 'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
                 '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
-                'ios', 'android', 'ad', 'drama', 'mp4'
+                'ios', 'android', 'ad', 'drama', 'mp4', 'bsj', 'kk', 'alta'
             }
+            
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                if re.match(r'^\d{4}\d{2}\d{2}$', p) or re.match(r'^\d{8}$', p): continue
+                # 过滤日期或长编号 (4位以上数字)
+                if re.match(r'^\d{4,12}$', p): continue
                 if p_lower in blacklist: continue
-                if len(p) <= 1: continue
+                # 过滤像 30, 1203 这种短数字片段
+                if p.isdigit() and len(p) < 5: continue
                 clean_parts.append(p)
+            
             result = " ".join(clean_parts).strip()
+            # 5. 处理驼峰 (HeIsNotYourHusband -> He Is Not Your Husband)
             result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
+            
             return result if len(result) > 2 else None
         except: return None
 

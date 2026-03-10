@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """管理 Meta ADS Campaign 的创建、监控、修改与效果分析"""
+    """管理 Meta ADS Campaign 的创建、监控、修改与深度效果分析"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -26,13 +26,13 @@ class CampaignManager:
             return {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"}
 
     def get_yesterday_insights(self):
-        """获取昨日消耗数据"""
+        """获取昨日全维度深度数据"""
         try:
             url = f"{self.base_url}/{self.ad_account_id}/insights"
             params = {
                 'level': 'campaign',
                 'date_preset': 'yesterday',
-                'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions',
+                'fields': 'campaign_id,spend,impressions,inline_link_clicks,actions,purchase_roas,cpm,cpp,cpp_conversions',
                 'access_token': self.access_token,
                 'limit': 100
             }
@@ -40,28 +40,63 @@ class CampaignManager:
             insights_map = {}
             if 'data' in resp:
                 for item in resp['data']:
-                    conversions = 0
+                    cid = item['campaign_id']
+                    spend = float(item.get('spend', 0))
+                    imps = int(item.get('impressions', 0))
+                    clicks = int(item.get('inline_link_clicks', 0))
+                    
+                    # 转化数据提取
+                    installs = 0
+                    purchases = 0
                     if 'actions' in item:
                         for action in item['actions']:
-                            if action['action_type'] in ['mobile_app_install', 'purchase', 'offsite_conversion.fb_pixel_purchase']:
-                                conversions += int(action['value'])
-                    insights_map[item['campaign_id']] = {
-                        'spend': float(item.get('spend', 0)),
-                        'conversions': conversions,
-                        'cpi': float(item.get('spend', 0)) / conversions if conversions > 0 else 0
+                            if action['action_type'] == 'mobile_app_install':
+                                installs += int(action['value'])
+                            if action['action_type'] in ['purchase', 'offsite_conversion.fb_pixel_purchase']:
+                                purchases += int(action['value'])
+                    
+                    # ROI 提取
+                    roi = 0
+                    if 'purchase_roas' in item:
+                        roi = float(item['purchase_roas'][0]['value']) if item['purchase_roas'] else 0
+
+                    insights_map[cid] = {
+                        'spend': spend,
+                        'imps': imps,
+                        'clicks': clicks,
+                        'installs': installs,
+                        'purchases': purchases,
+                        'roi': roi,
+                        'ctr': (clicks / imps) if imps > 0 else 0,
+                        'cvr': (installs / clicks) if clicks > 0 else 0,
+                        'cpm': float(item.get('cpm', 0)),
+                        'cpc': (spend / clicks) if clicks > 0 else 0,
+                        'cpi': (spend / installs) if installs > 0 else 0,
+                        'cpp': (spend / purchases) if purchases > 0 else 0
                     }
             return insights_map
-        except:
+        except Exception as e:
+            print(f"Error insights: {e}")
             return {}
 
     def get_all_campaigns(self):
-        """获取所有 Campaign 列表"""
+        """获取所有 Campaign 及其预算信息"""
         try:
             url = f"{self.base_url}/{self.ad_account_id}/campaigns"
-            params = {'fields': 'name,status,effective_status,start_time', 'access_token': self.access_token, 'limit': 50}
+            params = {
+                'fields': 'name,status,effective_status,start_time,daily_budget,lifetime_budget',
+                'access_token': self.access_token,
+                'limit': 50
+            }
             resp = requests.get(url, params=params).json()
             if 'data' in resp:
-                return sorted(resp['data'], key=lambda x: x.get('start_time', '0'), reverse=True)
+                data = resp['data']
+                for item in data:
+                    # 统一处理预算
+                    db = float(item.get('daily_budget', 0)) / 100
+                    lb = float(item.get('lifetime_budget', 0)) / 100
+                    item['budget'] = db if db > 0 else lb
+                return sorted(data, key=lambda x: x.get('start_time', '0'), reverse=True)
             return []
         except:
             return []

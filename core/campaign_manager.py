@@ -73,18 +73,21 @@ class CampaignManager:
                 
                 if matches:
                     print(f"✅ [DEBUG] 在标题附近命中海报: {len(matches)} 张")
-                    for i, m in enumerate(matches[:2]):
-                        print(f"  - 推荐图 {i+1}: {m}")
-                    return matches[0]
+                    # 🚀 改进：如果有多张，优先取第 2 张 (index 1)，因为第 1 张往往是小图或 Icon
+                    target_img = matches[1] if len(matches) > 1 else matches[0]
+                    print(f"🎯 [DEBUG] 选定海报: {target_img}")
+                    return target_img
                 else:
                     print(f"⚠️ [DEBUG] 找到了标题，但在附近 2000 字符内没找到 S3 图片")
             
-            # 4. 兜底：如果没找到标题或窗口内没图，尝试全局搜索第一张
+            # 4. 兜底：如果没找到标题或窗口内没图，尝试全局搜索
             print(f"🔭 [DEBUG] 切换至全局搜索兜底模式...")
             global_matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
             if global_matches:
-                print(f"💡 [DEBUG] 全局模式命中海报: {global_matches[0]}")
-                return global_matches[0]
+                # 同样逻辑：优先取 index 1
+                target_global = global_matches[1] if len(global_matches) > 1 else global_matches[0]
+                print(f"💡 [DEBUG] 全局模式选定海报: {target_global}")
+                return target_global
                 
             return None
         except Exception as e:

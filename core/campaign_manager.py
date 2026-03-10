@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v2.2.1: 精准剧名剥离版"""
+    """Meta ADS 管理器 v2.2.2: 结构修复版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -21,66 +21,49 @@ class CampaignManager:
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _extract_real_name_from_url(self, video_url):
-        """[极限增强] 剥离 (en), [pt], xxx-dramaname-xx 等各种干扰结构"""
+        """剥离干扰结构，提取剧名"""
         try:
             filename = unquote(video_url.split('/')[-1])
-            # 1. 统一分隔符：将括号、中括号、下划线、连字符全看作分隔符
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', filename)
-            # 2. 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
-            
-            # 3. 按空格拆分
             parts = name.split()
-            
-            # 4. 动态黑名单 (包含常见语言代码和版本标识)
             blacklist = {
                 'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
                 '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
                 'ios', 'android', 'ad', 'drama', 'mp4'
             }
-            
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                # 过滤日期
                 if re.match(r'^\d{4}\d{2}\d{2}$', p) or re.match(r'^\d{8}$', p): continue
-                # 过滤黑名单
                 if p_lower in blacklist: continue
-                # 过滤太短的词 (通常是干扰位)
                 if len(p) <= 1: continue
                 clean_parts.append(p)
-            
-            # 5. 重新组合并处理驼峰
             result = " ".join(clean_parts).strip()
             result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
-            
             return result if len(result) > 2 else None
         except: return None
-def _scrape_poster_from_web(self, drama_name):
-    """从 altatv.com 抓取海报并打印调试信息"""
-    try:
-        search_key = drama_name.replace(' ', '+')
-        url = f"https://altatv.com/search?keywords={search_key}&type=1"
-        print(f"🔍 [DEBUG] 正在访问官网搜索页: {url}")
 
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=5).text
-
-        # 搜索 S3 链接模式
-        matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
-
-        if matches:
-            print(f"✅ [DEBUG] 命中海报数量: {len(matches)}")
-            for i, m in enumerate(matches[:3]):
-                print(f"  - 候选图 {i+1}: {m}")
-            return matches[0]
-        else:
-            print(f"❌ [DEBUG] 搜索页未匹配到任何 S3 海报链接")
+    def _scrape_poster_from_web(self, drama_name):
+        """从 altatv.com 抓取海报并打印调试信息"""
+        try:
+            search_key = drama_name.replace(' ', '+')
+            url = f"https://altatv.com/search?keywords={search_key}&type=1"
+            print(f"🔍 [DEBUG] 正在访问官网搜索页: {url}")
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=5).text
+            matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
+            if matches:
+                print(f"✅ [DEBUG] 命中海报数量: {len(matches)}")
+                for i, m in enumerate(matches[:3]):
+                    print(f"  - 候选图 {i+1}: {m}")
+                return matches[0]
+            else:
+                print(f"❌ [DEBUG] 搜索页未匹配到任何 S3 海报链接")
+                return None
+        except Exception as e:
+            print(f"❌ [DEBUG] 官网抓取异常: {e}")
             return None
-    except Exception as e:
-        print(f"❌ [DEBUG] 官网抓取异常: {e}")
-        return None
-
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
         """探测 Meta 视频帧"""
@@ -93,16 +76,15 @@ def _scrape_poster_from_web(self, drama_name):
                 if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
                     h = res['thumbnails']['data'][0].get('hash')
                     if h: return h
+                print(f"⏳ [WAIT] 第 {i+1} 次尝试：Meta 处理中...")
             except: pass
         return None
 
     def create_campaign(self, drama_name, video_url, thumb_url=None):
         try:
             token = self.access_token
-            # 🚀 精准剥离真实剧名
             real_name = self._extract_real_name_from_url(video_url)
             search_name = real_name if real_name else drama_name
-            
             name_base = f"{search_name}-{datetime.now().strftime('%m%d%H%M')}"
 
             # 1. Video Upload
@@ -112,7 +94,6 @@ def _scrape_poster_from_web(self, drama_name):
 
             # 2. 智能缩略图决策
             img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
-            
             if not img_hash:
                 poster_url = self._scrape_poster_from_web(search_name)
                 final_img_url = poster_url if poster_url else "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
@@ -144,7 +125,6 @@ def _scrape_poster_from_web(self, drama_name):
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy = writer.generate_copy(search_name).get('versions', [{}])[0]
-            
             story_spec = {
                 'page_id': self.page_id,
                 'video_data': {

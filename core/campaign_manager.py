@@ -51,9 +51,13 @@ class CampaignManager:
                 'name': f"{name_base}-AS",
                 'campaign_id': c_id,
                 'daily_budget': 5000,
-                'optimization_goal': 'APP_INSTALLS', # 修正优化目标
+                'optimization_goal': 'APP_INSTALLS',
                 'billing_event': 'IMPRESSIONS',
-                'promoted_object': json.dumps({'application_id': self.app_id}), # 必须关联 APP ID
+                # 尝试更兼容的组合：App ID + 商店完整链接
+                'promoted_object': json.dumps({
+                    'application_id': self.app_id, 
+                    'object_store_url': self.app_link
+                }),
                 'targeting': json.dumps({'geo_locations': {'countries': ['US']}, 'device_platforms': ['mobile']}),
                 'status': 'PAUSED',
                 'access_token': token

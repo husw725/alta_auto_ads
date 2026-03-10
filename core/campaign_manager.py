@@ -38,16 +38,19 @@ class CampaignManager:
         except: return None
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
-        """[智能探测] 尝试获取官方视频帧，不成功则返回 None"""
-        for i in range(6): # 等待 18 秒，这是一个性能平衡点
+        """[参数回归] 恢复 40 秒探测窗口 (8 次 * 5 秒)"""
+        for i in range(8): # 恢复到 8 次
             try:
-                time.sleep(3)
+                time.sleep(5) # 恢复到 5 秒间隔
                 url = f"{self.base_url}/{video_id}"
                 params = {'fields': 'thumbnails', 'access_token': token}
                 res = requests.get(url, params=params).json()
                 if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
                     h = res['thumbnails']['data'][0].get('hash')
-                    if h: return h
+                    if h: 
+                        print(f"✨ 第 {i+1} 次尝试：成功获取视频帧 Hash: {h}")
+                        return h
+                print(f"⏳ 第 {i+1} 次尝试：Meta 正在处理高清视频，继续等待 (已过 { (i+1)*5 } 秒)...")
             except: pass
         return None
 

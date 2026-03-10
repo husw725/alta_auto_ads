@@ -58,27 +58,29 @@ class CampaignManager:
             headers = {"User-Agent": "Mozilla/5.0"}
             resp = requests.get(url, headers=headers, timeout=5).text
             
-            # 1. 尝试在 HTML 中定位剧名 (不区分大小写)
+            # 1. 定位剧名在 HTML 中的位置
             title_pos = resp.lower().find(drama_name.lower())
             
             if title_pos != -1:
-                print(f"🎯 [DEBUG] 在 HTML 偏移量 {title_pos} 处找到了剧名")
-                # 2. 截取剧名前后各 2000 个字符的“上下文窗口”
-                start = max(0, title_pos - 1000)
-                end = min(len(resp), title_pos + 1000)
-                context = resp[start:end]
+                print(f"🎯 [DEBUG] 找到标题位置: {title_pos}")
+                # 2. 根据截图，海报在标题左侧，HTML 中通常在标题上方
+                # 我们截取标题上方 3000 字符的范围进行深度搜索
+                search_start = max(0, title_pos - 3000)
+                upper_context = resp[search_start:title_pos]
                 
-                # 3. 在这个窗口内搜索 S3 海报链接
-                matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', context)
+                # 3. 提取所有 S3 链接
+                matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', upper_context)
                 
                 if matches:
-                    print(f"✅ [DEBUG] 在标题附近命中海报: {len(matches)} 张")
-                    # 🚀 改进：如果有多张，优先取第 2 张 (index 1)，因为第 1 张往往是小图或 Icon
-                    target_img = matches[1] if len(matches) > 1 else matches[0]
-                    print(f"🎯 [DEBUG] 选定海报: {target_img}")
+                    # 取距离标题最近的一个（即列表中的最后一个）
+                    target_img = matches[-1]
+                    print(f"✅ [DEBUG] 成功定位到标题上方的海报: {target_img}")
                     return target_img
                 else:
-                    print(f"⚠️ [DEBUG] 找到了标题，但在附近 2000 字符内没找到 S3 图片")
+                    print(f"⚠️ [DEBUG] 标题上方未找到图片，尝试向后搜索 1000 字符...")
+                    lower_context = resp[title_pos:title_pos+1000]
+                    m2 = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', lower_context)
+                    if m2: return m2[0]
             
             # 4. 兜底：如果没找到标题或窗口内没图，尝试全局搜索
             print(f"🔭 [DEBUG] 切换至全局搜索兜底模式...")

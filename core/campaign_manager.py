@@ -33,6 +33,7 @@ class CampaignManager:
                 'objective': 'OUTCOME_APP_PROMOTION',
                 'status': 'PAUSED',
                 'special_ad_categories': json.dumps(['NONE']),
+                'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', # 强制开启自动出价，解决“需设置竞价金额”报错
                 'access_token': token
             }
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data=c_payload).json()

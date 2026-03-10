@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v1.9.6: 全能合规版 (补全视频缩略图)"""
+    """Meta ADS 管理器 v1.9.7: 稳定版 (自动处理视频封面)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -24,7 +24,6 @@ class CampaignManager:
         except: return {"default": {"country": "US", "daily_budget": 50}}
 
     def create_campaign(self, drama_name, video_url, thumb_url=None):
-        """创建 Campaign (包含缩略图补全)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
@@ -46,7 +45,7 @@ class CampaignManager:
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
-            # 3. AdSet (iOS 锁定)
+            # 3. AdSet
             as_payload = {
                 'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS',
                 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS',
@@ -58,24 +57,25 @@ class CampaignManager:
             as_id = as_resp.get('id')
             if not as_id: return {'status': 'error', 'error': f"AdSet Fail: {as_resp}"}
 
-            # 4. AdCreative (补全 image_url)
+            # 4. AdCreative
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
             
-            # 如果 XMP 没给封面，则尝试用视频 URL 兜底（Meta 有时会自动提取，但显式传更好）
-            final_thumb = thumb_url if thumb_url else video_url
-
-            story_spec = {
-                'page_id': self.page_id,
-                'video_data': {
-                    'video_id': v_id,
-                    'image_url': final_thumb, # 关键修复：补全缩略图
-                    'message': copy.get('primary_text', 'Watch the latest drama now!'),
-                    'title': copy.get('headline', f"Watch {drama_name}"),
-                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
-                }
+            # 🚀 关键改进：如果传进来的 thumb_url 是 mp4 或为空，直接不传 image_url
+            # Meta 会自动使用视频的第一帧作为缩略图，从而避开下载失败
+            video_data = {
+                'video_id': v_id,
+                'message': copy.get('primary_text', 'Watch now!'),
+                'title': copy.get('headline', f"Watch {drama_name}"),
+                'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
             }
+            
+            # 仅当 thumb_url 确实是图片时才添加（简单通过后缀判断）
+            if thumb_url and any(thumb_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                video_data['image_url'] = thumb_url
+
+            story_spec = {'page_id': self.page_id, 'video_data': video_data}
             
             cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={
                 'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token

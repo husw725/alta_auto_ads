@@ -57,7 +57,7 @@ def save_config(config):
 # 4. 侧边栏
 with st.sidebar:
     st.title("🚀 Meta ADS")
-    page = st.radio("功能模式", ["💬 AI 投流助手", "📊 数据看板", "⚙️ 系统设置"], index=1)
+    page = st.radio("功能模式", ["💬 AI 投流助手", "📊 数据看板", "⚙️ 系统设置"], index=0)
     cfg = load_config()
     st.divider()
     st.caption(f"🌍 国家: `{cfg['default'].get('country')}` | 💰 预算: `${cfg['default'].get('daily_budget')}`")

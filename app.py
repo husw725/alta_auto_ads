@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 
 # 页面配置
-st.set_page_config(page_title="Auto Meta ADS | 智能监控旗舰版", page_icon="🦞", layout="wide")
+st.set_page_config(page_title="Auto Meta ADS | 旗舰版", page_icon="🦞", layout="wide")
 
 # 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
@@ -93,13 +93,13 @@ if page == "💬 AI 投流助手":
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     
-    # 🚀 优化点：自动加载数据
+    # 自动加载
     if not st.session_state.campaign_list:
         with st.spinner("首次进入，正在同步 Meta 表现..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
 
-    # 智能调优建议 (Top)
+    # 智能优化建议
     st.subheader("🤖 智能调优建议")
     if st.button("🔍 扫描分析风险项", type="primary"):
         with st.spinner("正在分析数据..."):
@@ -118,12 +118,12 @@ elif page == "📊 数据看板":
 
     st.divider()
 
-    # --- 🌟 顶部汇总项 (找回丢失的 KPI) ---
+    # 顶部 KPI (4项汇总)
     if st.session_state.campaign_list:
-        insights = st.session_state.yesterday_insights
-        total_spend = sum(ins.get('spend', 0) for ins in insights.values())
-        total_installs = sum(ins.get('installs', 0) for ins in insights.values())
-        avg_roi = sum(ins.get('roi', 0) for ins in insights.values()) / len(insights) if insights else 0
+        ins_map = st.session_state.yesterday_insights
+        total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
+        total_installs = sum(ins.get('installs', 0) for ins in ins_map.values())
+        avg_roi = sum(ins.get('roi', 0) for ins in ins_map.values()) / len(ins_map) if ins_map else 0
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
 
         m1, m2, m3, m4 = st.columns(4)
@@ -132,29 +132,46 @@ elif page == "📊 数据看板":
         m3.metric("平均 ROI", f"{avg_roi:.2f}")
         m4.metric("平均 CPI", f"${avg_cpi:.2f}")
 
-    if st.button("🔄 手动刷新数据", use_container_width=True):
+    if st.button("🔄 手动刷新详细数据", use_container_width=True):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
         st.rerun()
 
+    # --- 🌟 全指标表格 (补全所有 15 个字段) ---
     if st.session_state.campaign_list:
         rows = []
         insights = st.session_state.yesterday_insights
         for c in st.session_state.campaign_list:
             cid = c.get('id')
             ins = insights.get(cid, {})
+            # 解析时间
+            raw_time = c.get('start_time', '')[:16].replace('T', ' ')
+            delivery_date = raw_time.split()[0] if raw_time else '-'
+            
             rows.append({
-                "广告ID": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
-                "消耗": ins.get('spend', 0), "安装": ins.get('installs', 0), "ROI": f"{ins.get('roi',0):.2f}",
-                "CPI": f"${ins.get('cpi',0):.2f}", "CPM": f"${ins.get('cpm',0):.2f}", "CTR": f"{ins.get('ctr',0)*100:.2f}%"
+                "广告id": cid, 
+                "广告名称": c.get('name'),
+                "状态": c.get('effective_status'),
+                "创建时间": raw_time,
+                "投放日期": delivery_date,
+                "广告花费spend": ins.get('spend', 0),
+                "广告预算budget": float(c.get('daily_budget', 0)) / 100,
+                "点击量click": ins.get('clicks', 0),
+                "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%",
+                "安装量install": ins.get('installs', 0),
+                "投资回报率roi": f"{ins.get('roi', 0):.2f}",
+                "转化率 cvr": f"{ins.get('cvr', 0)*100:.2f}%",
+                "千次展示费用cpm": f"${ins.get('cpm', 0):.2f}",
+                "单次点击成本cpc": f"${ins.get('cpc', 0):.2f}",
+                "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}",
+                "单次购物成本cpp": f"${ins.get('cpp', 0):.2f}"
             })
         
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         st.subheader("⚙️ 生命周期管理")
-        for index, row in df.iterrows():
-            cid, name, status = row['广告ID'], row['广告名称'], row['状态']
+        for index, row in pd.DataFrame(rows).iterrows():
+            cid, name, status = row['广告id'], row['广告名称'], row['状态']
             c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
             with c1: st.write(f"**{name}**")
             with c2:
@@ -188,4 +205,4 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t})
             save_config(config); st.success("已保存")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.2 | 智能监控加强版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.3 | 全指标旗舰版</div>", unsafe_allow_html=True)

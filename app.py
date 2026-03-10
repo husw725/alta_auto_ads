@@ -92,17 +92,14 @@ if page == "💬 AI 投流助手":
 
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
-    
-    # 自动加载
     if not st.session_state.campaign_list:
-        with st.spinner("首次进入，正在同步 Meta 表现..."):
+        with st.spinner("同步 Meta 表现..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
 
-    # 智能优化建议
     st.subheader("🤖 智能调优建议")
     if st.button("🔍 扫描分析风险项", type="primary"):
-        with st.spinner("正在分析数据..."):
+        with st.spinner("分析数据中..."):
             history = campaign_manager.get_historical_insights()
             st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(st.session_state.campaign_list, st.session_state.yesterday_insights, history)
     
@@ -117,15 +114,12 @@ elif page == "📊 数据看板":
     else: st.info("当前运行平稳，暂无建议。")
 
     st.divider()
-
-    # 顶部 KPI (4项汇总)
     if st.session_state.campaign_list:
         ins_map = st.session_state.yesterday_insights
         total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
         total_installs = sum(ins.get('installs', 0) for ins in ins_map.values())
         avg_roi = sum(ins.get('roi', 0) for ins in ins_map.values()) / len(ins_map) if ins_map else 0
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
-
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("昨日总消耗", f"${total_spend:,.2f}")
         m2.metric("昨日总安装", f"{int(total_installs):,}")
@@ -137,38 +131,24 @@ elif page == "📊 数据看板":
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
         st.rerun()
 
-    # --- 🌟 全指标表格 (补全所有 15 个字段) ---
     if st.session_state.campaign_list:
         rows = []
         insights = st.session_state.yesterday_insights
         for c in st.session_state.campaign_list:
             cid = c.get('id')
             ins = insights.get(cid, {})
-            # 解析时间
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
-            delivery_date = raw_time.split()[0] if raw_time else '-'
-            
             rows.append({
-                "广告id": cid, 
-                "广告名称": c.get('name'),
-                "状态": c.get('effective_status'),
-                "创建时间": raw_time,
-                "投放日期": delivery_date,
-                "广告花费spend": ins.get('spend', 0),
-                "广告预算budget": float(c.get('daily_budget', 0)) / 100,
-                "点击量click": ins.get('clicks', 0),
-                "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%",
-                "安装量install": ins.get('installs', 0),
-                "投资回报率roi": f"{ins.get('roi', 0):.2f}",
-                "转化率 cvr": f"{ins.get('cvr', 0)*100:.2f}%",
-                "千次展示费用cpm": f"${ins.get('cpm', 0):.2f}",
-                "单次点击成本cpc": f"${ins.get('cpc', 0):.2f}",
-                "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}",
+                "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
+                "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
+                "广告花费spend": ins.get('spend', 0), "广告预算budget": float(c.get('daily_budget', 0)) / 100,
+                "点击量click": ins.get('clicks', 0), "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%",
+                "安装量install": ins.get('installs', 0), "投资回报率roi": f"{ins.get('roi', 0):.2f}",
+                "转化率 cvr": f"{ins.get('cvr', 0)*100:.2f}%", "千次展示费用cpm": f"${ins.get('cpm', 0):.2f}",
+                "单次点击成本cpc": f"${ins.get('cpc', 0):.2f}", "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}",
                 "单次购物成本cpp": f"${ins.get('cpp', 0):.2f}"
             })
-        
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
         st.subheader("⚙️ 生命周期管理")
         for index, row in pd.DataFrame(rows).iterrows():
             cid, name, status = row['广告id'], row['广告名称'], row['状态']
@@ -195,14 +175,22 @@ elif page == "📊 数据看板":
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    with st.expander("🚀 投流策略", expanded=True):
+    with st.expander("🚀 投流基础策略", expanded=True):
         c1, c2 = st.columns(2)
         d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU"], index=0)
         d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
-        cpi_t = c2.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
-        if st.button("💾 保存配置"):
-            config['default'].update({"country": d_country, "daily_budget": d_budget})
-            config['strategy'].update({"CPI_THRESHOLD": cpi_t})
-            save_config(config); st.success("已保存")
+        if st.button("💾 保存基础"):
+            config['default'].update({"country": d_country, "daily_budget": d_budget}); save_config(config); st.success("已保存")
+    with st.expander("🤖 智能风控策略", expanded=True):
+        c1, c2 = st.columns(2)
+        cpi_t = c1.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
+        min_s = c2.number_input("最小判定消耗", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)))
+        if st.button("💾 保存风控"):
+            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效")
+    with st.expander("📅 定时日报设置", expanded=True):
+        webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
+        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:00'))
+        if st.button("💾 保存日报"):
+            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.3 | 全指标旗舰版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.4 | 功能全开最终版</div>", unsafe_allow_html=True)

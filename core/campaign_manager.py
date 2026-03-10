@@ -49,22 +49,44 @@ class CampaignManager:
             return result if len(result) > 2 else None
 
     def _scrape_poster_from_web(self, drama_name):
-        """从 altatv.com 抓取海报并打印调试信息"""
+        """从 altatv.com 搜索剧名，并根据标题位置精准定位海报"""
         try:
             search_key = drama_name.replace(' ', '+')
             url = f"https://altatv.com/search?keywords={search_key}&type=1"
             print(f"🔍 [DEBUG] 正在访问官网搜索页: {url}")
+            
             headers = {"User-Agent": "Mozilla/5.0"}
             resp = requests.get(url, headers=headers, timeout=5).text
-            matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
-            if matches:
-                print(f"✅ [DEBUG] 命中海报数量: {len(matches)}")
-                for i, m in enumerate(matches[:3]):
-                    print(f"  - 候选图 {i+1}: {m}")
-                return matches[0]
-            else:
-                print(f"❌ [DEBUG] 搜索页未匹配到任何 S3 海报链接")
-                return None
+            
+            # 1. 尝试在 HTML 中定位剧名 (不区分大小写)
+            title_pos = resp.lower().find(drama_name.lower())
+            
+            if title_pos != -1:
+                print(f"🎯 [DEBUG] 在 HTML 偏移量 {title_pos} 处找到了剧名")
+                # 2. 截取剧名前后各 2000 个字符的“上下文窗口”
+                start = max(0, title_pos - 1000)
+                end = min(len(resp), title_pos + 1000)
+                context = resp[start:end]
+                
+                # 3. 在这个窗口内搜索 S3 海报链接
+                matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', context)
+                
+                if matches:
+                    print(f"✅ [DEBUG] 在标题附近命中海报: {len(matches)} 张")
+                    for i, m in enumerate(matches[:2]):
+                        print(f"  - 推荐图 {i+1}: {m}")
+                    return matches[0]
+                else:
+                    print(f"⚠️ [DEBUG] 找到了标题，但在附近 2000 字符内没找到 S3 图片")
+            
+            # 4. 兜底：如果没找到标题或窗口内没图，尝试全局搜索第一张
+            print(f"🔭 [DEBUG] 切换至全局搜索兜底模式...")
+            global_matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
+            if global_matches:
+                print(f"💡 [DEBUG] 全局模式命中海报: {global_matches[0]}")
+                return global_matches[0]
+                
+            return None
         except Exception as e:
             print(f"❌ [DEBUG] 官网抓取异常: {e}")
             return None

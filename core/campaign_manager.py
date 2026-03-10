@@ -86,9 +86,9 @@ class CampaignManager:
                     'message': copy.get('primary_text', 'Watch the latest drama now!'), # 广告正文
                     'title': copy.get('headline', f"Watch {drama_name}"), # 强制要求：广告标题 (Headline)
                     'call_to_action': {
-                        'type': 'INSTALL_NOW', # 强制要求：按钮类型
+                        'type': 'INSTALL_APP', # 修正为报错中允许的正确枚举值
                         'value': {
-                            'link': self.official_store_url # 必须与 AdSet 一致
+                            'link': self.official_store_url
                         }
                     }
                 }

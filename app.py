@@ -93,17 +93,22 @@ if page == "💬 AI 投流助手":
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     
-    # 智能调优建议
+    # 🚀 优化点：自动加载数据
+    if not st.session_state.campaign_list:
+        with st.spinner("首次进入，正在同步 Meta 表现..."):
+            st.session_state.campaign_list = campaign_manager.get_all_campaigns()
+            st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
+
+    # 智能调优建议 (Top)
     st.subheader("🤖 智能调优建议")
-    if st.button("🔍 扫描分析昨日表现", type="primary"):
+    if st.button("🔍 扫描分析风险项", type="primary"):
         with st.spinner("正在分析数据..."):
-            camps = campaign_manager.get_all_campaigns()
-            insights = campaign_manager.get_yesterday_insights()
-            st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(camps, insights)
+            history = campaign_manager.get_historical_insights()
+            st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(st.session_state.campaign_list, st.session_state.yesterday_insights, history)
     
     if st.session_state.pending_actions:
         for i, act in enumerate(st.session_state.pending_actions):
-            risk_text = "⚠️ [高额支出需批准]" if act.get('risk') else "💡 [建议执行]"
+            risk_text = "⚠️ [高支出需审批]" if act.get('risk') else "💡 [建议执行]"
             with st.expander(f"{risk_text} {act['type']}: {act['name']}", expanded=True):
                 st.markdown(f"原因: {act['reason']}")
                 if st.button("✅ 批准执行", key=f"pact_{i}"):
@@ -113,9 +118,24 @@ elif page == "📊 数据看板":
 
     st.divider()
 
-    if st.button("🔄 同步详细表现 (昨日)", use_container_width=True):
+    # --- 🌟 顶部汇总项 (找回丢失的 KPI) ---
+    if st.session_state.campaign_list:
+        insights = st.session_state.yesterday_insights
+        total_spend = sum(ins.get('spend', 0) for ins in insights.values())
+        total_installs = sum(ins.get('installs', 0) for ins in insights.values())
+        avg_roi = sum(ins.get('roi', 0) for ins in insights.values()) / len(insights) if insights else 0
+        avg_cpi = total_spend / total_installs if total_installs > 0 else 0
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("昨日总消耗", f"${total_spend:,.2f}")
+        m2.metric("昨日总安装", f"{int(total_installs):,}")
+        m3.metric("平均 ROI", f"{avg_roi:.2f}")
+        m4.metric("平均 CPI", f"${avg_cpi:.2f}")
+
+    if st.button("🔄 手动刷新数据", use_container_width=True):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
+        st.rerun()
 
     if st.session_state.campaign_list:
         rows = []
@@ -132,12 +152,9 @@ elif page == "📊 数据看板":
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-        st.subheader("⚙️ 状态与生命周期管理")
+        st.subheader("⚙️ 生命周期管理")
         for index, row in df.iterrows():
-            cid = row['广告ID']
-            name = row['广告名称']
-            status = row['状态']
-            
+            cid, name, status = row['广告ID'], row['广告名称'], row['状态']
             c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
             with c1: st.write(f"**{name}**")
             with c2:
@@ -147,16 +164,15 @@ elif page == "📊 数据看板":
                 if st.button("🟡 暂停", key=f"pau_{cid}", disabled=(status=='PAUSED')):
                     if campaign_manager.update_campaign_status(cid, "PAUSED"): st.rerun()
             with c4:
-                del_confirm_key = f"del_confirm_{cid}"
-                if st.session_state.get(del_confirm_key):
+                del_key = f"del_confirm_{cid}"
+                if st.session_state.get(del_key):
                     if st.button("🔥 确认删除", key=f"fdel_{cid}", type="primary"):
-                        if campaign_manager.delete_campaign(cid):
-                            st.success("已删除"); st.session_state[del_confirm_key] = False; st.rerun()
+                        if campaign_manager.delete_campaign(cid): st.rerun()
                     if st.button("取消", key=f"cdel_{cid}"):
-                        st.session_state[del_confirm_key] = False; st.rerun()
+                        st.session_state[del_key] = False; st.rerun()
                 else:
                     if st.button("🗑️ 删除", key=f"pre_{cid}"):
-                        st.session_state[del_confirm_key] = True; st.rerun()
+                        st.session_state[del_key] = True; st.rerun()
             st.divider()
 
 elif page == "⚙️ 系统设置":
@@ -172,4 +188,4 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t})
             save_config(config); st.success("已保存")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.1 | 全功能生命周期管理版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.2 | 智能监控加强版</div>", unsafe_allow_html=True)

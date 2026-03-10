@@ -20,14 +20,10 @@ class CampaignManager:
         self.official_store_url = "http://itunes.apple.com/app/id6469592412"
         self.base_url = "https://graph.facebook.com/v21.0"
 
-    def _extract_real_name_from_url(self, video_url):
-        """[深度剥离] 剔除拼音前缀、中文备注及各种编号"""
-        try:
-            filename = unquote(video_url.split('/')[-1])
-            # 1. 彻底移除所有非 ASCII 字符 (如中文：英语、投流等)
-            name = filename.encode('ascii', 'ignore').decode('ascii')
-            # 2. 统一分隔符
+            # 2. 统一分隔符并处理驼峰 (确保像 bsjMistakenLover 被拆成 bsj Mistaken Lover)
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
+            name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+            
             # 3. 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
             
@@ -36,25 +32,21 @@ class CampaignManager:
             blacklist = {
                 'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
                 '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
-                'ios', 'android', 'ad', 'drama', 'mp4', 'bsj', 'kk', 'alta'
+                'ios', 'android', 'ad', 'drama', 'mp4', 'bsj', 'kk', 'alta', 'kkshort'
             }
             
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                # 过滤日期或长编号 (4位以上数字)
+                # 过滤日期、黑名单、短数字
                 if re.match(r'^\d{4,12}$', p): continue
                 if p_lower in blacklist: continue
-                # 过滤像 30, 1203 这种短数字片段
                 if p.isdigit() and len(p) < 5: continue
+                if len(p) <= 1: continue
                 clean_parts.append(p)
             
             result = " ".join(clean_parts).strip()
-            # 5. 处理驼峰 (HeIsNotYourHusband -> He Is Not Your Husband)
-            result = re.sub(r'([a-z])([A-Z])', r'\1 \2', result)
-            
             return result if len(result) > 2 else None
-        except: return None
 
     def _scrape_poster_from_web(self, drama_name):
         """从 altatv.com 抓取海报并打印调试信息"""

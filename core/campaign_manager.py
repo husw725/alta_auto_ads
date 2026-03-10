@@ -184,3 +184,10 @@ class CampaignManager:
     def update_campaign_status(self, cid, status):
         try: return requests.post(f"{self.base_url}/{cid}", data={'status': status, 'access_token': self.access_token}).json().get('success', False)
         except: return False
+
+    def delete_campaign(self, cid):
+        """[高危操作] 永久删除 Campaign"""
+        try:
+            res = requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json()
+            return res.get('success', False)
+        except: return False

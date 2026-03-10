@@ -162,16 +162,22 @@ elif page == "📊 数据看板":
         df = pd.DataFrame(rows)
         
         # --- 恢复：昨日总数据概述面板 ---
+        total_camps = len(df)
+        active_camps = len(df[df['状态'] == 'ACTIVE'])
+        active_pct = (active_camps / total_camps * 100) if total_camps > 0 else 0
+        
         total_spend = df['花费'].sum()
         total_install = df['安装'].sum()
         avg_roi = df[df['花费'] > 0]['ROI'].mean()
         avg_cpi = total_spend / total_install if total_install > 0 else 0
         
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("昨日总消耗", f"${total_spend:,.2f}")
-        m2.metric("昨日总安装", f"{int(total_install):,}")
-        m3.metric("平均 ROI", f"{avg_roi:.2f}")
-        m4.metric("平均 CPI", f"${avg_cpi:.2f}")
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        m1.metric("广告总数", f"{total_camps}")
+        m2.metric("激活占比", f"{active_pct:.1f}%", help=f"活跃: {active_camps} / 总数: {total_camps}")
+        m3.metric("昨日总消耗", f"${total_spend:,.2f}")
+        m4.metric("昨日总安装", f"{int(total_install):,}")
+        m5.metric("平均 ROI", f"{avg_roi:.2f}")
+        m6.metric("平均 CPI", f"${avg_cpi:.2f}")
         
         st.divider()
         st.dataframe(df, use_container_width=True, hide_index=True)

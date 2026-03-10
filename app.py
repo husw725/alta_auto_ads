@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 
 # 页面配置
-st.set_page_config(page_title="Auto Meta ADS | 旗舰版", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Auto Meta ADS | 智能监控旗舰版", page_icon="🦞", layout="wide")
 
 # 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
@@ -70,7 +70,6 @@ if page == "💬 AI 投流助手":
     if prompt := st.chat_input("输入剧名或编号..."):
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
-        
         res_name = prompt
         if st.session_state.last_candidates:
             m = re.search(r'(\d+)', prompt)
@@ -97,20 +96,29 @@ if page == "💬 AI 投流助手":
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     
-    st.subheader("🤖 智能优化建议")
-    if st.button("🔍 扫描分析账号", type="primary"):
-        with st.spinner("正在分析数据..."):
+    # --- 智能调优 (带人工干预机制) ---
+    st.subheader("🤖 智能调优建议")
+    if st.button("🔍 扫描分析账号昨日表现", type="primary"):
+        with st.spinner("分析数据中..."):
             camps = campaign_manager.get_all_campaigns()
             insights = campaign_manager.get_yesterday_insights()
-            st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(camps, insights)
+            history = campaign_manager.get_historical_insights()
+            st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(camps, insights, history)
     
     if st.session_state.pending_actions:
         for i, act in enumerate(st.session_state.pending_actions):
-            with st.expander(f"💡 {act['type']}: {act['name']}", expanded=True):
-                st.write(f"原因: {act['reason']}")
-                if st.button("✅ 批准执行", key=f"exec_{i}"):
-                    if campaign_manager.execute_action(act): st.success("已执行！"); st.session_state.pending_actions.pop(i); st.rerun()
-    else: st.info("暂无优化建议。")
+            risk_prefix = "⚠️ [高额支出请确认]" if act.get('risk') else "💡 [建议执行]"
+            with st.expander(f"{risk_prefix} {act['type']}: {act['name']}", expanded=True):
+                st.markdown(f"**原因**: {act['reason']}")
+                if act['type'] == 'BUDGET': st.markdown(f"**调整目标**: ${act['value']:.2f}")
+                
+                c1, c2 = st.columns([1, 4])
+                if c1.button("✅ 确认执行", key=f"exec_{i}"):
+                    if campaign_manager.execute_action(act):
+                        st.success("指令已生效！"); st.session_state.pending_actions.pop(i); st.rerun()
+                if c2.button("❌ 忽略", key=f"ignore_{i}"):
+                    st.session_state.pending_actions.pop(i); st.rerun()
+    else: st.info("当前账户运行平稳，暂无调优建议。")
 
     st.divider()
 
@@ -126,46 +134,23 @@ elif page == "📊 数据看板":
             ins = insights.get(cid, {})
             rows.append({
                 "广告ID": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
-                "创建时间": c.get('start_time', '')[:16], "花费": ins.get('spend', 0),
-                "预算": float(c.get('daily_budget', 0))/100, "点击": ins.get('clicks', 0),
-                "CTR": f"{ins.get('ctr', 0)*100:.2f}%", "安装": ins.get('installs', 0),
-                "ROI": f"{ins.get('roi', 0):.2f}", "CVR": f"{ins.get('cvr', 0)*100:.2f}%",
-                "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}",
-                "CPI": f"${ins.get('cpi', 0):.2f}", "CPP": f"${ins.get('cpp', 0):.2f}"
+                "花费": ins.get('spend', 0), "预算": float(c.get('daily_budget', 0))/100, 
+                "安装": ins.get('installs', 0), "ROI": f"{ins.get('roi', 0):.2f}", 
+                "CPI": f"${ins.get('cpi', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}", "CTR": f"{ins.get('ctr', 0)*100:.2f}%"
             })
-        
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        st.subheader("⚙️ 状态管理")
-        for index, row in df.iterrows():
-            c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
-            with c1: st.write(f"**{row['广告名称']}**")
-            with c2: st.caption(f"ID: `{row['广告ID']}` | `{row['状态']}`")
-            with c3:
-                if st.button("🟢 激活", key=f"on_{row['广告ID']}", disabled=(row['状态']=='ACTIVE')):
-                    if campaign_manager.update_campaign_status(row['广告ID'], "ACTIVE"): st.rerun()
-            with c4:
-                if st.button("🟡 暂停", key=f"off_{row['广告ID']}", disabled=(row['状态']=='PAUSED')):
-                    if campaign_manager.update_campaign_status(row['广告ID'], "PAUSED"): st.rerun()
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    with st.expander("🚀 基础策略", expanded=True):
+    with st.expander("🚀 投流策略 (龙虾AI 标准)", expanded=True):
         c1, c2 = st.columns(2)
-        d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"], index=0)
-        d_budget = c1.number_input("预算 ($)", value=int(config['default'].get('daily_budget', 50)))
-        if st.button("💾 保存基础"):
+        d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU"], index=0)
+        d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
+        cpi_t = c2.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
+        if st.button("💾 保存配置"):
             config['default'].update({"country": d_country, "daily_budget": d_budget})
-            save_config(config); st.success("已保存")
+            config['strategy'].update({"CPI_THRESHOLD": cpi_t})
+            save_config(config); st.success("配置已保存")
 
-    with st.expander("🤖 智能风控", expanded=True):
-        c1, c2 = st.columns(2)
-        cpi_t = c1.slider("CPI 阈值", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
-        min_s = c2.number_input("最小消耗", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)))
-        if st.button("💾 保存风控"):
-            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s})
-            save_config(config); st.success("已生效")
-
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.3.0 | 全指标专业版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.0 | 龙虾AI 智能风控版</div>", unsafe_allow_html=True)

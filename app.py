@@ -36,7 +36,32 @@ campaign_manager = init_campaign_manager()
 
 # 3. 辅助函数
 def load_config():
-    with open('config/config.json', 'r') as f:
+    config_path = 'config/config.json'
+    config_dir = 'config'
+    
+    # 自动创建目录
+    if not os.path.exists(config_dir):
+        os.makedirs(config_dir)
+        
+    # 如果文件不存在，自动初始化默认配置
+    if not os.path.exists(config_path):
+        default_config = {
+            "default": {
+                "country": "US",
+                "daily_budget": 50,
+                "optimization_goal": "MOBILE_APP_INSTALLS"
+            },
+            "report": {
+                "enabled": True,
+                "send_time": "10:00",
+                "webhook_url": "",
+                "last_sent": ""
+            }
+        }
+        with open(config_path, 'w') as f:
+            json.dump(default_config, f, indent=2)
+            
+    with open(config_path, 'r') as f:
         return json.load(f)
 
 def save_config(config):

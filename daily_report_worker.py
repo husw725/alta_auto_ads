@@ -6,8 +6,18 @@ from datetime import datetime
 from core.campaign_manager import CampaignManager
 
 def run_job(is_test=False):
-    # 1. 加载配置
-    with open('config/config.json', 'r') as f:
+    # 1. 加载配置 (带自动创建逻辑)
+    config_path = 'config/config.json'
+    if not os.path.exists('config'): os.makedirs('config')
+    
+    if not os.path.exists(config_path):
+        default_config = {
+            "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
+            "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
+        }
+        with open(config_path, 'w') as f: json.dump(default_config, f, indent=2)
+    
+    with open(config_path, 'r') as f:
         config = json.load(f)
     
     report_cfg = config.get('report', {})

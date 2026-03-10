@@ -56,17 +56,31 @@ class CampaignManager:
             
             return result if len(result) > 2 else None
         except: return None
+def _scrape_poster_from_web(self, drama_name):
+    """从 altatv.com 抓取海报并打印调试信息"""
+    try:
+        search_key = drama_name.replace(' ', '+')
+        url = f"https://altatv.com/search?keywords={search_key}&type=1"
+        print(f"🔍 [DEBUG] 正在访问官网搜索页: {url}")
 
-    def _scrape_poster_from_web(self, drama_name):
-        """从 altatv.com 抓取海报"""
-        try:
-            search_key = drama_name.replace(' ', '+')
-            url = f"https://altatv.com/search?keywords={search_key}&type=1"
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, timeout=5).text
-            matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
-            return matches[0] if matches else None
-        except: return None
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=5).text
+
+        # 搜索 S3 链接模式
+        matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
+
+        if matches:
+            print(f"✅ [DEBUG] 命中海报数量: {len(matches)}")
+            for i, m in enumerate(matches[:3]):
+                print(f"  - 候选图 {i+1}: {m}")
+            return matches[0]
+        else:
+            print(f"❌ [DEBUG] 搜索页未匹配到任何 S3 海报链接")
+            return None
+    except Exception as e:
+        print(f"❌ [DEBUG] 官网抓取异常: {e}")
+        return None
+
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
         """探测 Meta 视频帧"""

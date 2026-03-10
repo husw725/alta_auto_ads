@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v2.0.0: 智能异步双保险版"""
+    """Meta ADS 管理器 v2.1.0: 智能海报抓取 + 双路探测版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -18,41 +18,29 @@ class CampaignManager:
         self.meta_app_id = "1807921329643155"
         self.official_store_url = "http://itunes.apple.com/app/id6469592412"
         self.base_url = "https://graph.facebook.com/v21.0"
-        # 预置一个已验证的官方图标 Hash (AltaTV Logo)
-        # 如果获取不到视频帧，就用这个兜底，确保 100% 成功
-        self.fallback_img_hash = None 
 
-    def _get_or_upload_fallback_hash(self, token):
-        """[核心加固] 预先上传一个图标作为保险绳"""
+    def _scrape_poster_from_web(self, drama_name):
+        """[新增] 从 altatv.com 实时抓取该剧的海报图"""
         try:
-            # 使用 GitHub 托管的图片或稳定的 CDN 图片确保 Meta 100% 能下载
-            logo_url = "https://raw.githubusercontent.com/husw725/alta_auto_ads/main/config/logo.png"
-            # 尝试从稳定的 CDN 获取
-            res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={
-                'copy_from_url': "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png", 
-                'access_token': token
-            }).json()
-            if 'images' in res:
-                # 获取返回的第一个 Hash
-                first_key = list(res['images'].keys())[0]
-                return res['images'][first_key]['hash']
-            return None
+            url = f"https://altatv.com/search?keywords={drama_name}&type=1"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=5).text
+            # 搜索 S3 链接模式
+            matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
+            return matches[0] if matches else None
         except: return None
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
-        """[参数回归] 恢复 40 秒探测窗口 (8 次 * 5 秒)"""
-        for i in range(8): # 恢复到 8 次
+        """[核心] 探测视频帧 Hash"""
+        for i in range(8):
             try:
-                time.sleep(8) # 恢复到 5 秒间隔
+                time.sleep(5)
                 url = f"{self.base_url}/{video_id}"
                 params = {'fields': 'thumbnails', 'access_token': token}
                 res = requests.get(url, params=params).json()
                 if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
                     h = res['thumbnails']['data'][0].get('hash')
-                    if h: 
-                        print(f"✨ 第 {i+1} 次尝试：成功获取视频帧 Hash: {h}")
-                        return h
-                print(f"⏳ 第 {i+1} 次尝试：Meta 正在处理高清视频，继续等待 (已过 { (i+1)*5 } 秒)...")
+                    if h: return h
             except: pass
         return None
 
@@ -64,20 +52,28 @@ class CampaignManager:
             # 1. Upload Video
             v_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': video_url, 'access_token': token}).json()
             v_id = v_resp.get('id')
-            if not v_id: return {'status': 'error', 'error': f"Video Fail: {v_resp}"}
+            if not v_id: return {'status': 'error', 'error': f"Step 1 Video Fail: {v_resp}"}
 
-            # 2. 🚀 双路并行获取 Hash
-            # 路径 A: 探测视频帧
+            # 2. 🚀 智能缩略图决策逻辑
             img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
             
-            # 路径 B: 如果路径 A 失败，立即上传一个图标作为兜底
             if not img_hash:
-                print("⏳ 视频抽帧较慢，启动图标兜底方案...")
-                img_hash = self._get_or_upload_fallback_hash(token)
-            
-            if not img_hash: return {'status': 'error', 'error': "无法获取有效的图片 Hash，Meta 接口当前较繁忙"}
+                print(f"⏳ 视频抽帧超时，尝试从官网抓取剧集 {drama_name} 的海报...")
+                poster_url = self._scrape_poster_from_web(drama_name)
+                # 如果官网没搜到，用 Play Store 徽标兜底
+                final_img_url = poster_url if poster_url else "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
+                
+                # 上传这张图并获取 Hash
+                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={
+                    'copy_from_url': final_img_url, 'access_token': token
+                }).json()
+                if 'images' in img_res:
+                    first_key = list(img_res['images'].keys())[0]
+                    img_hash = img_res['images'][first_key]['hash']
 
-            # 3. Campaign
+            if not img_hash: return {'status': 'error', 'error': "无法获取有效的图片 Hash，Meta 接口当前繁忙"}
+
+            # 3. Campaign (CBO)
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={
                 'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED',
                 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': 5000,
@@ -85,7 +81,7 @@ class CampaignManager:
             }).json()
             c_id = c_resp.get('id')
 
-            # 4. AdSet
+            # 4. AdSet (iOS 锁定)
             as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={
                 'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS',
                 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS',
@@ -139,6 +135,3 @@ class CampaignManager:
     def update_campaign_status(self, cid, status):
         try: return requests.post(f"{self.base_url}/{cid}", data={'status': status, 'access_token': self.access_token}).json().get('success', False)
         except: return False
-
-    def get_yesterday_insights(self): return {}
-    def evaluate_optimization_rules(self, camps, ins, hist): return []

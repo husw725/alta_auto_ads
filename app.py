@@ -165,6 +165,23 @@ elif page == "📊 数据看板":
         st.divider()
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+        # --- 状态管理一键开关 ---
+        st.subheader("⚙️ 状态管理")
+        for index, row in df.iterrows():
+            c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
+            with c1: st.write(f"**{row['名称']}**")
+            with c2: st.caption(f"ID: `{row['ID']}` | 状态: `{row['状态']}`")
+            with c3:
+                is_active = (row['状态'] == 'ACTIVE')
+                if st.button("🟢 激活", key=f"on_{row['ID']}", disabled=is_active):
+                    if campaign_manager.update_campaign_status(row['ID'], "ACTIVE"):
+                        st.success(f"已激活"); st.rerun()
+            with c4:
+                is_paused = (row['状态'] == 'PAUSED')
+                if st.button("🟡 暂停", key=f"off_{row['ID']}", disabled=is_paused):
+                    if campaign_manager.update_campaign_status(row['ID'], "PAUSED"):
+                        st.warning(f"已暂停"); st.rerun()
+
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()

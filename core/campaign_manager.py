@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v2.2.2: 结构修复版"""
+    """Meta ADS 管理器 v2.2.3: 极限稳定 + 精准海报版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -20,15 +20,19 @@ class CampaignManager:
         self.official_store_url = "http://itunes.apple.com/app/id6469592412"
         self.base_url = "https://graph.facebook.com/v21.0"
 
-            # 2. 统一分隔符并处理驼峰 (确保像 bsjMistakenLover 被拆成 bsj Mistaken Lover)
+    def _extract_real_name_from_url(self, video_url):
+        """[核心算法] 从混乱的文件名中精准剥离剧名"""
+        try:
+            filename = unquote(video_url.split('/')[-1])
+            # 1. 彻底移除所有非 ASCII 字符 (如中文)
+            name = filename.encode('ascii', 'ignore').decode('ascii')
+            # 2. 统一分隔符并处理驼峰
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
             name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
-            
             # 3. 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
             
             parts = name.split()
-            # 4. 增强版动态黑名单
             blacklist = {
                 'v1', 'v2', 'v3', 'eng', 'en', 'us', 'pt', 'br', 'es', 'espanol', 
                 '1080p', '720p', '60fps', '30fps', 'short', 'final', 'fixed', 'export',
@@ -38,7 +42,6 @@ class CampaignManager:
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                # 过滤日期、黑名单、短数字
                 if re.match(r'^\d{4,12}$', p): continue
                 if p_lower in blacklist: continue
                 if p.isdigit() and len(p) < 5: continue
@@ -47,9 +50,10 @@ class CampaignManager:
             
             result = " ".join(clean_parts).strip()
             return result if len(result) > 2 else None
+        except: return None
 
     def _scrape_poster_from_web(self, drama_name):
-        """从 altatv.com 搜索剧名，并根据标题位置精准定位海报"""
+        """[邻近定位] 根据截图布局，精准抓取标题左侧/上方的海报"""
         try:
             search_key = drama_name.replace(' ', '+')
             url = f"https://altatv.com/search?keywords={search_key}&type=1"
@@ -58,43 +62,29 @@ class CampaignManager:
             headers = {"User-Agent": "Mozilla/5.0"}
             resp = requests.get(url, headers=headers, timeout=5).text
             
-            # 1. 定位剧名在 HTML 中的位置
+            # 定位剧名在 HTML 中的位置
             title_pos = resp.lower().find(drama_name.lower())
             
             if title_pos != -1:
-                print(f"🎯 [DEBUG] 找到标题位置: {title_pos}")
-                # 2. 根据截图，海报在标题左侧，HTML 中通常在标题上方
-                # 我们截取标题上方 3000 字符的范围进行深度搜索
+                # 截图显示海报在左，源码中在文字上方。向上搜索 3000 字符。
                 search_start = max(0, title_pos - 3000)
                 upper_context = resp[search_start:title_pos]
-                
-                # 3. 提取所有 S3 链接
                 matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', upper_context)
                 
                 if matches:
-                    # 取距离标题最近的一个（即列表中的最后一个）
+                    # 取距离标题最近的一个 (即最后一个匹配项)
                     target_img = matches[-1]
-                    print(f"✅ [DEBUG] 成功定位到标题上方的海报: {target_img}")
+                    print(f"✅ [DEBUG] 成功定位到标题附近的海报: {target_img}")
                     return target_img
-                else:
-                    print(f"⚠️ [DEBUG] 标题上方未找到图片，尝试向后搜索 1000 字符...")
-                    lower_context = resp[title_pos:title_pos+1000]
-                    m2 = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', lower_context)
-                    if m2: return m2[0]
             
-            # 4. 兜底：如果没找到标题或窗口内没图，尝试全局搜索
-            print(f"🔭 [DEBUG] 切换至全局搜索兜底模式...")
+            # 兜底：全局搜索
             global_matches = re.findall(r'https://starlitshorts\.s3\.amazonaws\.com/s/[a-f0-9]+\.(?:png|jpg|webp)', resp)
             if global_matches:
-                # 同样逻辑：优先取 index 1
+                # 优先取 index 1 (通常是海报而不是图标)
                 target_global = global_matches[1] if len(global_matches) > 1 else global_matches[0]
-                print(f"💡 [DEBUG] 全局模式选定海报: {target_global}")
                 return target_global
-                
             return None
-        except Exception as e:
-            print(f"❌ [DEBUG] 官网抓取异常: {e}")
-            return None
+        except: return None
 
     def _get_video_thumbnail_hash_smart(self, video_id, token):
         """探测 Meta 视频帧"""
@@ -107,7 +97,7 @@ class CampaignManager:
                 if 'thumbnails' in res and 'data' in res['thumbnails'] and res['thumbnails']['data']:
                     h = res['thumbnails']['data'][0].get('hash')
                     if h: return h
-                print(f"⏳ [WAIT] 第 {i+1} 次尝试：Meta 处理中...")
+                print(f"⏳ [WAIT] 第 {i+1} 次尝试：Meta 正在抽帧...")
             except: pass
         return None
 
@@ -172,7 +162,7 @@ class CampaignManager:
             ad_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/ads", data={'name': f"{name_base}-Ad", 'adset_id': as_id, 'creative': json.dumps({'creative_id': cr_id}), 'status': 'PAUSED', 'access_token': token}).json()
             requests.post(f"{self.base_url}/{c_id}", data={'status': 'ACTIVE', 'access_token': token})
             requests.post(f"{self.base_url}/{as_id}", data={'status': 'ACTIVE', 'access_token': token})
-            requests.post(f"{self.base_url}/{ad_resp['id']}", data={'status': 'ACTIVE', 'access_token': token})
+            requests.post(f"{self.base_url}/{ad_resp.get('id', '')}", data={'status': 'ACTIVE', 'access_token': token})
 
             return {'status': 'success', 'campaign_id': c_id}
         except Exception as e: return {'status': 'error', 'error': str(e)}

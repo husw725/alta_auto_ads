@@ -29,18 +29,36 @@ campaign_manager = get_campaign_manager()
 def load_config():
     config_path = 'config/config.json'
     if not os.path.exists('config'): os.makedirs('config')
+    
+    # 默认完整配置模板
+    default_template = {
+        "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
+        "strategy": {
+            "CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0,
+            "BUDGET_ADJUST_STEP_UP": 0.3, "BUDGET_ADJUST_STEP_DOWN": 0.5,
+            "BID_ADJUST_STEP": 0.1, "HIGH_SPEND_LIMIT": 200.0, "ADJUST_LIMIT_VALUE": 100.0
+        },
+        "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
+    }
+
     if not os.path.exists(config_path):
-        default_config = {
-            "default": {"country": "US", "daily_budget": 50, "optimization_goal": "MOBILE_APP_INSTALLS"},
-            "strategy": {
-                "CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0,
-                "BUDGET_ADJUST_STEP_UP": 0.3, "BUDGET_ADJUST_STEP_DOWN": 0.5,
-                "BID_ADJUST_STEP": 0.1, "HIGH_SPEND_LIMIT": 200.0, "ADJUST_LIMIT_VALUE": 100.0
-            },
-            "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
-        }
-        with open(config_path, 'w') as f: json.dump(default_config, f, indent=2)
-    with open(config_path, 'r') as f: return json.load(f)
+        with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
+        return default_template
+    
+    with open(config_path, 'r') as f:
+        user_cfg = json.load(f)
+    
+    # 核心修复逻辑：补全缺失的顶级 Key (如 strategy)
+    updated = False
+    for k, v in default_template.items():
+        if k not in user_cfg:
+            user_cfg[k] = v
+            updated = True
+    
+    if updated:
+        with open(config_path, 'w') as f: json.dump(user_cfg, f, indent=2)
+        
+    return user_cfg
 
 def save_config(config):
     with open('config/config.json', 'w') as f: json.dump(config, f, indent=2)

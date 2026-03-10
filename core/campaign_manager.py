@@ -2,13 +2,14 @@ import os
 import requests
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class CampaignManager:
-    """Meta ADS 管理器 v1.9.7: 稳定版 (自动处理视频封面)"""
+    """Meta ADS 管理器 v1.9.8: 官方缩略图自动对齐版"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -23,7 +24,24 @@ class CampaignManager:
             with open('config/config.json', 'r') as f: return json.load(f)
         except: return {"default": {"country": "US", "daily_budget": 50}}
 
+    def _get_video_thumbnail(self, video_id):
+        """[核心功能] 从 Meta 官方接口获取该视频处理后的缩略图"""
+        token = self.access_token
+        url = f"{self.base_url}/{video_id}/thumbnails"
+        
+        # 最多尝试 3 次，每次等 2 秒，给 Meta 一点处理视频的时间
+        for i in range(3):
+            try:
+                time.sleep(2)
+                resp = requests.get(url, params={'access_token': token}).json()
+                if 'data' in resp and len(resp['data']) > 0:
+                    # 优先获取最高分辨率的缩略图
+                    return resp['data'][0].get('uri')
+            except: pass
+        return None
+
     def create_campaign(self, drama_name, video_url, thumb_url=None):
+        """创建 Campaign (包含全自动缩略图提取)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
@@ -34,6 +52,16 @@ class CampaignManager:
             v_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': video_url, 'access_token': token}).json()
             v_id = v_resp.get('id')
             if not v_id: return {'status': 'error', 'error': f"Video Fail: {v_resp}"}
+
+            # 🚀 关键步骤：获取视频自带的缩略图
+            official_thumb = self._get_video_thumbnail(v_id)
+            # 如果 Meta 生成得慢，且 XMP 给的是图片链接，则用 XMP 的；否则用 Meta 官方的
+            final_image_url = official_thumb if official_thumb else thumb_url
+            
+            # 兜底：如果还是没拿到图片链接（比如 XMP 给的是 mp4），我们就必须要传一个图，
+            # 否则会被 Meta 报 1443226。此时我们传 App 的官方 Icon 作为最后兜底。
+            if not final_image_url or '.mp4' in final_image_url.lower():
+                final_image_url = "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3d/8c/7a/3d8c7a6b-6b7a-8d7a-6b7a-8d7a6b7a8d7a/AppIcon-0-0-1x_U007emarketing-0-7-0-sRGB-85-220.png/512x512bb.jpg"
 
             # 2. Campaign (CBO)
             c_payload = {
@@ -62,20 +90,16 @@ class CampaignManager:
             writer = Copywriter()
             copy = writer.generate_copy(drama_name).get('versions', [{}])[0]
             
-            # 🚀 关键改进：如果传进来的 thumb_url 是 mp4 或为空，直接不传 image_url
-            # Meta 会自动使用视频的第一帧作为缩略图，从而避开下载失败
-            video_data = {
-                'video_id': v_id,
-                'message': copy.get('primary_text', 'Watch now!'),
-                'title': copy.get('headline', f"Watch {drama_name}"),
-                'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
+            story_spec = {
+                'page_id': self.page_id,
+                'video_data': {
+                    'video_id': v_id,
+                    'image_url': final_image_url, # 强制提供图片链接
+                    'message': copy.get('primary_text', 'Watch the latest drama now!'),
+                    'title': copy.get('headline', f"Watch {drama_name}"),
+                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
+                }
             }
-            
-            # 仅当 thumb_url 确实是图片时才添加（简单通过后缀判断）
-            if thumb_url and any(thumb_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-                video_data['image_url'] = thumb_url
-
-            story_spec = {'page_id': self.page_id, 'video_data': video_data}
             
             cr_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adcreatives", data={
                 'name': f"{name_base}-Cr", 'object_story_spec': json.dumps(story_spec), 'access_token': token

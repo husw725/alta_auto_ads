@@ -102,6 +102,7 @@ class CampaignManager:
         return None
 
     def create_campaign(self, drama_name, video_url, thumb_url=None):
+        """创建 Campaign (优先使用传入的 XMP 海报)"""
         try:
             token = self.access_token
             real_name = self._extract_real_name_from_url(video_url)
@@ -113,12 +114,23 @@ class CampaignManager:
             v_id = v_resp.get('id')
             if not v_id: return {'status': 'error', 'error': f"Step 1 Video Fail: {v_resp}"}
 
-            # 2. 智能缩略图决策
+            # 2. 🚀 缩略图决策逻辑：优先使用传入的 thumb_url (来自 XMP)
+            # 先尝试 40 秒 Meta 官方抽帧
             img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
+            
+            if not img_hash and thumb_url:
+                print(f"⏳ 视频抽帧超时，尝试上传 XMP 海报: {thumb_url}")
+                # 只有当它是合法图片时才尝试上传
+                if any(thumb_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.webp']):
+                    img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': thumb_url, 'access_token': token}).json()
+                    if 'images' in img_res:
+                        img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash']
+
+            # 3. 终极兜底：如果还是没有，用稳定的 Play Store 图标
             if not img_hash:
-                poster_url = self._scrape_poster_from_web(search_name)
-                final_img_url = poster_url if poster_url else "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
-                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': final_img_url, 'access_token': token}).json()
+                print("⚠️ 无法获取海报，启动图标兜底...")
+                fallback_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_Play_Store_badge_EN.svg/2560px-Google_Play_Store_badge_EN.svg.png"
+                img_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': fallback_url, 'access_token': token}).json()
                 if 'images' in img_res:
                     img_hash = img_res['images'][list(img_res['images'].keys())[0]]['hash']
 

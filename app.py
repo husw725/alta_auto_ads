@@ -146,6 +146,13 @@ elif page == "📊 数据看板":
     else: st.info("当前运行平稳。")
 
     st.divider()
+    
+    # 🚀 找回丢失的手动刷新按钮
+    if st.button("🔄 手动刷新 Meta 详细数据", width='stretch'):
+        st.session_state.campaign_list = campaign_manager.get_all_campaigns()
+        st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
+        st.rerun()
+
     # --- 🌟 全指标看板 (15 指标补完版) ---
     if st.session_state.campaign_list:
         rows = []

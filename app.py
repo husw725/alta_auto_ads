@@ -130,6 +130,7 @@ elif page == "📊 数据看板":
     }
     selected_label = date_col1.selectbox("查看日期 (Meta 账户时区)", list(date_options.keys()), index=0)
     date_str = date_options[selected_label]
+    selected_day = "今天" if date_str == today_str else "昨天"
 
     date_col2.info(f"统计口径：**{selected_label}** | 参考时区：**UTC-8 (PST)**")
 

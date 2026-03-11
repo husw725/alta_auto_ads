@@ -1,56 +1,61 @@
 import streamlit as st
 from core.video_selector import AutoMetaADS
 from core.campaign_manager import CampaignManager
+from daily_report_worker import run_job
 import os
 import pandas as pd
 import json
-import pytz
+import time
+import threading
 import re
-import platform
-import subprocess
 from datetime import datetime
 
 # 页面配置
-st.set_page_config(page_title="Auto Meta ADS | 旗舰版", page_icon="🦞", layout="wide")
+st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# --- 🚀 系统定时任务同步逻辑 (支持时间更新) ---
-def setup_auto_scheduler(target_time=None):
-    """根据操作系统自动注册或更新定时日报任务"""
-    try:
-        current_dir = os.path.abspath(os.path.dirname(__file__))
-        # 如果没传时间，从配置文件读
-        if not target_time:
-            with open('config/config.json', 'r') as f:
-                target_time = json.load(f).get('report', {}).get('send_time', '10:25')
+# --- 🚀 全内置定时报表引擎 (不再依赖系统任务) ---
+@st.cache_resource
+def start_background_monitor():
+    """在后台开启一个永久心跳线程"""
+    def monitor_loop():
+        print("🚀 [System] 内部日报监控引擎已启动...")
+        last_run_date = "" # 记录今天是否跑过，防止一分钟内重复触发
         
-        system_type = platform.system()
-        
-        if system_type == "Windows":
-            bat_path = os.path.join(current_dir, "run_daily_report.bat")
-            if not os.path.exists(bat_path):
-                with open(bat_path, "w") as f:
-                    f.write(f"@echo off\ncd /d {current_dir}\npython daily_report_worker.py\nexit")
-            # 使用 /f 强制覆盖既有任务，实现时间更新
-            create_cmd = f'schtasks /create /tn "AutoMetaAdsReport" /tr "{bat_path}" /sc daily /st {target_time} /f'
-            subprocess.run(create_cmd, shell=True, capture_output=True)
-            print(f"✅ Windows 任务同步成功: {target_time}")
-        
-        elif system_type in ["Darwin", "Linux"]:
-            # 解析时间 10:25 -> 25 10
-            mm, hh = target_time.split(':')
-            python_path = subprocess.check_output("which python3", shell=True).decode().strip()
-            new_cron_line = f"{mm} {hh} * * * cd {current_dir} && {python_path} daily_report_worker.py >> {current_dir}/report.log 2>&1"
+        while True:
+            try:
+                # 1. 实时读取最新配置
+                with open('config/config.json', 'r') as f:
+                    cfg = json.load(f)
+                
+                report_cfg = cfg.get('report', {})
+                if not report_cfg.get('enabled'):
+                    time.sleep(60); continue
+                
+                target_time = report_cfg.get('send_time', '10:25')
+                now = datetime.now()
+                current_time = now.strftime("%H:%M")
+                today = now.strftime("%Y-%m-%d")
+                
+                # 2. 对表：时间匹配且今天没跑过
+                if current_time == target_time and last_run_date != today:
+                    print(f"⏰ [Trigger] 定时时间已到 ({target_time})，正在执行日报改进任务...")
+                    # 直接调用日报 worker 逻辑
+                    run_job(is_test=False)
+                    last_run_date = today # 锁定今日
+                    print(f"✅ [Success] 日报已发送，今日任务完成。")
+                
+            except Exception as e:
+                print(f"❌ [Error] 监控引擎异常: {e}")
             
-            # 先删掉包含该脚本的旧行，再追加新行
-            current_cron = subprocess.run("crontab -l", shell=True, capture_output=True).stdout.decode()
-            filtered_cron = "\n".join([line for line in current_cron.splitlines() if "daily_report_worker.py" not in line])
-            updated_cron = (filtered_cron + "\n" + new_cron_line).strip()
-            
-            process = subprocess.Popen(['crontab', '-'], stdin=subprocess.PIPE)
-            process.communicate(input=updated_cron.encode())
-            print(f"✅ macOS/Linux Cron 同步成功: {target_time}")
-    except Exception as e:
-        print(f"⚠️ 任务同步失败: {e}")
+            time.sleep(30) # 每 30 秒对一次表
+
+    # 开启守护线程，随 Streamlit 服务生死
+    t = threading.Thread(target=monitor_loop, daemon=True)
+    t.start()
+    return True
+
+# 启动引擎
+start_background_monitor()
 
 # 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
@@ -59,7 +64,7 @@ if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块初始化
+# 2. 核心模块
 ads_module = AutoMetaADS()
 campaign_manager = CampaignManager()
 
@@ -74,16 +79,10 @@ def load_config():
     if not os.path.exists(config_path):
         with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
         return default_template
-    with open(config_path, 'r') as f: user_cfg = json.load(f)
-    return user_cfg
+    with open(config_path, 'r') as f: return json.load(f)
 
 def save_config(config):
     with open('config/config.json', 'w') as f: json.dump(config, f, indent=2)
-
-# 启动自检 (确保系统任务与配置一致)
-if 'scheduler_initialized' not in st.session_state:
-    setup_auto_scheduler()
-    st.session_state.scheduler_initialized = True
 
 # 4. 侧边栏
 with st.sidebar:
@@ -184,12 +183,9 @@ elif page == "📊 数据看板":
             rows.append({
                 "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
                 "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
-                "广告花费spend": ins.get('spend', 0), "广告预算budget": float(c.get('daily_budget', 0)) / 100,
-                "点击量click": ins.get('clicks', 0), "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%",
-                "安装量install": ins.get('installs', 0), "投资回报率roi": f"{ins.get('roi', 0):.2f}",
-                "转化率 cvr": f"{ins.get('cvr', 0)*100:.2f}%", "千次展示费用cpm": f"${ins.get('cpm', 0):.2f}",
-                "单次点击成本cpc": f"${ins.get('cpc', 0):.2f}", "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}",
-                "单次购物成本cpp": f"${ins.get('cpp', 0):.2f}"
+                "广告花费spend": ins.get('spend', 0), "点击量click": ins.get('clicks', 0),
+                "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装量install": ins.get('installs', 0),
+                "投资回报率roi": f"{ins.get('roi', 0):.2f}", "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}"
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         st.subheader("⚙️ 生命周期管理")
@@ -232,14 +228,10 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效")
     with st.expander("📅 定时日报设置", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        st.write(f"**任务健康度**: {'🟢 正常' if '2026' in last_sent else '🔴 待检查'} (上次成功: {last_sent})")
+        st.write(f"**任务运行状态**: ⚡ 内部监控引擎正常 (上次成功: {last_sent})")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
-            config['report'].update({"webhook_url": webhook, "send_time": send_time})
-            save_config(config)
-            # 🚀 核心改进：保存即同步系统任务
-            setup_auto_scheduler(send_time)
-            st.success("✅ 设置已保存并同步系统任务！")
+            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.6 | 全量同步版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.5.0 | 内置定时引擎版 (零外部依赖)</div>", unsafe_allow_html=True)

@@ -2,14 +2,14 @@ import os
 import json
 import requests
 import subprocess
+import platform
 from datetime import datetime
 from core.campaign_manager import CampaignManager
 
 def run_job(is_test=False):
-    """日报核心逻辑 (支持被 app.py 调用)"""
+    """日报核心逻辑 (全平台自适应版)"""
     try:
-        # 1. 加载配置
-        config_path = 'config/config.json'
+        config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
         if not os.path.exists(config_path): return
         
         with open(config_path, 'r') as f:
@@ -18,83 +18,63 @@ def run_job(is_test=False):
         report_cfg = config.get('report', {})
         if not report_cfg.get('enabled') and not is_test: return
 
-        # 2. 初始化核心
+        # 1. 获取数据
         cm = CampaignManager()
         campaigns = cm.get_all_campaigns()
         insights = cm.get_yesterday_insights()
         history = cm.get_historical_insights()
         
-        # 3. 智能调优 (2.0 逻辑)
+        # 2. 调优逻辑
         pending_actions = cm.evaluate_optimization_rules(campaigns, insights, history)
         executed_log = ""
         awaiting_approval_log = ""
-        
         for act in pending_actions:
-            if act.get('risk'):
-                awaiting_approval_log += f"- ⚠️ **待手动确认**: {act['name']} ({act['reason']})\n"
+            if act.get('risk'): awaiting_approval_log += f"- ⚠️ **待确认**: {act['name']} ({act['reason']})\n"
             else:
-                if cm.execute_action(act):
-                    executed_log += f"- ✅ 已自动执行: {act['type']} - {act['name']} ({act['reason']})\n"
+                if cm.execute_action(act): executed_log += f"- ✅ 已执行: {act['type']} - {act['name']}\n"
         
-        if not executed_log: executed_log = "- ✨ 暂无低风险自动调优动作。\n"
-        if not awaiting_approval_log: awaiting_approval_log = "- ✅ 暂无高风险需人工确认项。\n"
+        if not executed_log: executed_log = "- ✨ 暂无自动调优动作。\n"
+        if not awaiting_approval_log: awaiting_approval_log = "- ✅ 暂无高风险项。\n"
 
-        # 4. 数据汇总
+        # 3. 汇总与详情
         total_spend = sum(ins.get('spend', 0) for ins in insights.values())
         total_installs = sum(ins.get('installs', 0) for ins in insights.values())
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
         
-        # 5. 构建报表 (Top 5)
         details = ""
         sorted_c = sorted(campaigns, key=lambda x: insights.get(x['id'], {}).get('spend', 0), reverse=True)
         for c in sorted_c[:5]:
             ins = insights.get(c['id'], {})
-            details += f"**{c['name']}**\n"
-            details += f"- 消耗: `${ins.get('spend',0):.2f}` | 安装: `{ins.get('installs',0)}` | CPI: `${ins.get('cpi',0):.2f}`\n\n"
+            details += f"**{c['name']}**\n- 消耗: `${ins.get('spend',0):.2f}` | 安装: `{ins.get('installs',0)}` | CPI: `${ins.get('cpi',0):.2f}`\n\n"
 
-        report_md = f"""# 📊 Meta 投流智能调优日报
-> 📅 日期: {datetime.now().strftime('%Y-%m-%d')}
+        report_md = f"# 📊 Meta 智能调优日报\n> 📅 {datetime.now().strftime('%Y-%m-%d')}\n\n## 📈 表现: Spend `${total_spend:.2f}` | Install `{total_installs}` | Avg CPI `${avg_cpi:.2f}`\n\n## 🤖 调优战报\n{executed_log}\n## 🛑 需审批\n{awaiting_approval_log}\n## 🔍 Top 5 详情\n{details}\n---\n*Auto Meta ADS v2.5.4*"
 
-## 📈 整体表现
-- **总消耗**: `${total_spend:.2f}`
-- **总安装**: `{total_installs}`
-- **平均 CPI**: `${avg_cpi:.2f}`
-
----
-
-## 🤖 自动执行记录 (Safe)
-{executed_log}
-
----
-
-## 🛑 需您人工审批 (High Risk)
-{awaiting_approval_log}
-> 💡 请前往 [龙虾AI数据看板] 批准或忽略以上高风险操作。
-
----
-
-## 🔍 重点项目 (Top 5)
-{details}
-
----
-*Auto Meta ADS v2.5.0 · 内部监控引擎已就绪*
-"""
-
-        # 6. 发送并记录心跳
+        # 🚀 4. 全平台自适应发送逻辑
         webhook = report_cfg.get('webhook_url')
         if webhook:
-            sender_path = "/Users/husw/.gemini/skills/dingtalk-sender/scripts/send.py"
-            cmd = ["python3", sender_path, webhook, report_md]
-            res = subprocess.run(cmd, capture_output=True)
+            # 根据系统选择 python 命令
+            py_cmd = "python" if platform.system() == "Windows" else "python3"
+            
+            # 自动定位发送脚本 (兼容 Windows 和 macOS)
+            home = os.path.expanduser("~")
+            sender_path = os.path.join(home, ".gemini", "skills", "dingtalk-sender", "scripts", "send.py")
+            
+            if not os.path.exists(sender_path):
+                print(f"❌ 找不到发送脚本: {sender_path}")
+                return
+
+            cmd = [py_cmd, sender_path, webhook, report_md]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            
             if res.returncode == 0:
                 config['report']['last_sent'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 with open(config_path, 'w') as f: json.dump(config, f, indent=2)
-                print(f"✅ 日报发送成功")
+                print(f"✅ 日报成功送达钉钉")
             else:
-                print(f"❌ 钉钉发送失败: {res.stderr.decode()}")
+                print(f"❌ 发送失败: {res.stderr}")
                 
     except Exception as e:
-        print(f"❌ run_job 发生异常: {e}")
+        print(f"❌ run_job 崩溃: {e}")
 
 if __name__ == "__main__":
     import sys

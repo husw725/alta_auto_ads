@@ -74,11 +74,17 @@ def run_job(is_test=False):
 ---
 *Auto Meta ADS v2.4.0 · 智能风控引擎已就绪*
 """
+# 5. 发送
+webhook = report_cfg.get('webhook_url')
+if webhook:
+    cmd = ["python3", "/Users/husw/.gemini/skills/dingtalk-sender/scripts/send.py", webhook, report_md]
+    res = subprocess.run(cmd)
+    if res.returncode == 0:
+        # 🚀 记录成功心跳
+        config['report']['last_sent'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(config_path, 'w') as f: json.dump(config, f, indent=2)
+        print(f"Report sent and heart-beat updated.")
 
-    webhook = report_cfg.get('webhook_url')
-    if webhook:
-        cmd = ["python3", "/Users/husw/.gemini/skills/dingtalk-sender/scripts/send.py", webhook, report_md]
-        subprocess.run(cmd)
 
 if __name__ == "__main__":
     import sys

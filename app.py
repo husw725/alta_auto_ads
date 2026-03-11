@@ -6,10 +6,50 @@ import pandas as pd
 import json
 import pytz
 import re
+import platform
+import subprocess
 from datetime import datetime
 
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 旗舰版", page_icon="🦞", layout="wide")
+
+# --- 🚀 系统定时任务全自动初始化逻辑 ---
+def setup_auto_scheduler():
+    """根据操作系统自动注册定时日报任务"""
+    try:
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        send_time = "10:25" # 锁定 10:25
+        system_type = platform.system()
+        
+        if system_type == "Windows":
+            # 1. 确保 BAT 文件存在
+            bat_path = os.path.join(current_dir, "run_daily_report.bat")
+            if not os.path.exists(bat_path):
+                with open(bat_path, "w") as f:
+                    f.write(f"@echo off\ncd /d {current_dir}\npython daily_report_worker.py\nexit")
+            
+            # 2. 检查并创建任务 (schtasks)
+            check_cmd = f'schtasks /query /tn "AutoMetaAdsReport"'
+            if subprocess.run(check_cmd, shell=True, capture_output=True).returncode != 0:
+                create_cmd = f'schtasks /create /tn "AutoMetaAdsReport" /tr "{bat_path}" /sc daily /st {send_time} /f'
+                subprocess.run(create_cmd, shell=True)
+                print(f"✅ Windows 任务计划已注册: {send_time}")
+        
+        elif system_type in ["Darwin", "Linux"]:
+            # 1. 构建 Cron 指令
+            python_path = subprocess.check_output("which python3", shell=True).decode().strip()
+            cron_cmd = f"25 10 * * * cd {current_dir} && {python_path} daily_report_worker.py >> {current_dir}/report.log 2>&1"
+            
+            # 2. 检查是否存在
+            existing_cron = subprocess.run("crontab -l", shell=True, capture_output=True).stdout.decode()
+            if "daily_report_worker.py" not in existing_cron:
+                os.system(f'(crontab -l 2>/dev/null; echo "{cron_cmd}") | crontab -')
+                print(f"✅ macOS/Linux Cron 已注册: {send_time}")
+    except Exception as e:
+        print(f"⚠️ 自动初始化定时任务失败: {e}")
+
+# 启动即运行自检
+setup_auto_scheduler()
 
 # 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
@@ -28,7 +68,7 @@ def load_config():
     default_template = {
         "default": {"country": "US", "daily_budget": 50, "optimization_goal": "APP_INSTALLS"},
         "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0},
-        "report": {"enabled": True, "send_time": "10:00", "webhook_url": "", "last_sent": ""}
+        "report": {"enabled": True, "send_time": "10:25", "webhook_url": "", "last_sent": ""}
     }
     if not os.path.exists(config_path):
         with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
@@ -47,7 +87,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"🌍 {cfg['default'].get('country')} | 💰 ${cfg['default'].get('daily_budget')}")
 
-# 5. 主区域内容
+# 5. 主区域内容 (保持原有逻辑...)
 if page == "💬 AI 投流助手":
     st.title("💬 AI 投流助手")
     for i, chat in enumerate(st.session_state.chat_history):
@@ -73,10 +113,8 @@ if page == "💬 AI 投流助手":
             if m:
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(st.session_state.last_candidates): res_name = st.session_state.last_candidates[idx]['name']
-
         with st.spinner("🔍 检索素材..."):
             success, result = ads_module.process_request(res_name, enable_campaign=False)
-        
         with st.chat_message("assistant"):
             if success:
                 st.session_state.last_candidates = None
@@ -99,7 +137,7 @@ elif page == "📊 数据看板":
 
     st.subheader("🤖 智能调优建议")
     if st.button("🔍 扫描分析风险项", type="primary"):
-        with st.spinner("分析数据中..."):
+        with st.spinner("正在分析数据..."):
             history = campaign_manager.get_historical_insights()
             st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(st.session_state.campaign_list, st.session_state.yesterday_insights, history)
     
@@ -135,8 +173,7 @@ elif page == "📊 数据看板":
         rows = []
         insights = st.session_state.yesterday_insights
         for c in st.session_state.campaign_list:
-            cid = c.get('id')
-            ins = insights.get(cid, {})
+            cid, ins = c.get('id'), insights.get(c.get('id'), {})
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
             rows.append({
                 "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
@@ -188,9 +225,11 @@ elif page == "⚙️ 系统设置":
         if st.button("💾 保存风控"):
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效")
     with st.expander("📅 定时日报设置", expanded=True):
+        last_sent = config['report'].get('last_sent', '无记录')
+        st.write(f"**任务健康度**: {'🟢 正常' if '2026' in last_sent else '🔴 待检查'} (上次成功: {last_sent})")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
-        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:00'))
+        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.4 | 功能全开最终版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.5 | 跨平台自动化环境版</div>", unsafe_allow_html=True)

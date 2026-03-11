@@ -173,7 +173,7 @@ elif page == "📊 数据看板":
         m3.metric("平均 ROI", f"{avg_roi:.2f}")
         m4.metric("平均 CPI", f"${avg_cpi:.2f}")
 
-    if st.button("🔄 手动刷新详细数据", use_container_width=True):
+    if st.button("🔄 手动刷新详细数据", width='stretch'):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
         st.rerun()
@@ -191,7 +191,7 @@ elif page == "📊 数据看板":
                 "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装量install": ins.get('installs', 0),
                 "投资回报率roi": f"{ins.get('roi', 0):.2f}", "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}"
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
         st.subheader("⚙️ 生命周期管理")
         for index, row in pd.DataFrame(rows).iterrows():
             cid, name, status = row['广告id'], row['广告名称'], row['状态']

@@ -89,7 +89,9 @@ if page == "💬 AI 投流助手":
                     if st.form_submit_button("🚀 启动并激活 Campaign"):
                         with st.spinner("执行中..."):
                             c_res = campaign_manager.create_campaign(res['drama'], res['video_link'], res.get('video_detail', {}).get('cover_url'))
-                        if c_res.get('status') == 'success': st.success("✅ 已激活！")
+                        if c_res.get('status') == 'success': 
+                            st.success("✅ 已激活！")
+                            st.session_state.campaign_list = [] # 🚀 清空列表强制刷新
                         else: st.error(f"❌ 失败: {c_res['error']}")
 
     if prompt := st.chat_input("输入剧名或编号..."):
@@ -130,8 +132,9 @@ elif page == "📊 数据看板":
     selected_day = "今天" if date_str == today_str else "昨天"
     date_col2.info(f"统计口径：**{selected_label}** | 参考时区：**UTC-8 (PST)**")
 
+    # 🚀 核心改进：只要执行过删除或状态切换，session_state.campaign_list 会被置空，从而触发此处的实时拉取
     if st.session_state.current_date_view != date_str or not st.session_state.campaign_list:
-        with st.spinner(f"拉取 {date_str} 数据..."):
+        with st.spinner(f"正在拉取 Meta 实时数据..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
             st.session_state.current_date_view = date_str
@@ -159,19 +162,19 @@ elif page == "📊 数据看板":
         safe_actions = [a for a in st.session_state.pending_actions if not a.get('risk')]
         if safe_actions and c2.button(f"⚡ 一键执行 {len(safe_actions)} 项安全优化", width='stretch'):
             for act in safe_actions: campaign_manager.execute_action(act)
-            st.success(f"已执行 {len(safe_actions)} 项优化！"); st.session_state.pending_actions = []; st.rerun()
+            st.success("批量执行成功"); st.session_state.campaign_list = []; st.rerun() # 🚀 清空强制刷新
         for i, act in enumerate(st.session_state.pending_actions):
             risk_text = "⚠️ [需审批]" if act.get('risk') else "💡 [建议]"
             with st.expander(f"{risk_text} {act['type']}: {act['name']}", expanded=True):
                 st.write(f"原因: {act['reason']}")
                 if st.button("✅ 批准执行", key=f"pact_{i}"):
-                    if campaign_manager.execute_action(act): st.success("已执行"); st.session_state.pending_actions.pop(i); st.rerun()
+                    if campaign_manager.execute_action(act): 
+                        st.success("已执行"); st.session_state.campaign_list = []; st.rerun() # 🚀 清空强制刷新
     else: st.info("当前运行平稳。")
 
     st.divider()
     if st.button("🔄 手动刷新 Meta 详细数据", width='stretch'):
-        st.session_state.campaign_list = campaign_manager.get_all_campaigns()
-        st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
+        st.session_state.campaign_list = [] # 🚀 清空强制重新拉取
         st.rerun()
 
     if st.session_state.campaign_list:
@@ -195,18 +198,25 @@ elif page == "📊 数据看板":
             with cl1: st.write(f"**{name}**")
             with cl2:
                 if st.button("🟢 激活", key=f"act_{cid}", disabled=(status=='ACTIVE')):
-                    if campaign_manager.update_campaign_status(cid, "ACTIVE"): st.rerun()
+                    if campaign_manager.update_campaign_status(cid, "ACTIVE"): 
+                        st.session_state.campaign_list = []; st.rerun() # 🚀 清空强制刷新
             with cl3:
                 if st.button("🟡 暂停", key=f"pau_{cid}", disabled=(status=='PAUSED')):
-                    if campaign_manager.update_campaign_status(cid, "PAUSED"): st.rerun()
+                    if campaign_manager.update_campaign_status(cid, "PAUSED"): 
+                        st.session_state.campaign_list = []; st.rerun() # 🚀 清空强制刷新
             with cl4:
                 del_k = f"del_{cid}"
                 if st.session_state.get(del_k):
                     if st.button("🔥 确认删除", key=f"fdel_{cid}", type="primary"):
                         if campaign_manager.delete_campaign(cid):
-                            st.success("已永久删除"); st.session_state[del_k] = False; st.rerun()
-                    if st.button("取消", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
-                elif st.button("🗑️ 删除", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
+                            st.success("已永久删除")
+                            st.session_state[del_k] = False
+                            st.session_state.campaign_list = [] # 🚀 清空列表强制刷新
+                            st.rerun()
+                    if st.button("取消", key=f"rdel_{cid}"):
+                        st.session_state[del_k] = False; st.rerun()
+                elif st.button("🗑️ 删除", key=f"pre_{cid}"):
+                    st.session_state[del_k] = True; st.rerun()
             st.divider()
 
 elif page == "⚙️ 系统设置":
@@ -233,4 +243,4 @@ elif page == "⚙️ 系统设置":
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("已保存"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.6 | 零回退终极版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.7 | 实时状态同步版</div>", unsafe_allow_html=True)

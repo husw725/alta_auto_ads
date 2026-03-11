@@ -35,7 +35,6 @@ def start_background_monitor():
                 target_time = cfg.get('report', {}).get('send_time', '10:25')
                 enabled = cfg.get('report', {}).get('enabled', True)
                 current_fingerprint = f"{today}_{target_time}"
-                with open(log_file, "a") as f: f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: {current_time} | {target_time}\n")
                 if enabled and current_time == target_time and last_trigger_fingerprint != current_fingerprint:
                     run_job(is_test=False)
                     last_trigger_fingerprint = current_fingerprint
@@ -46,14 +45,15 @@ def start_background_monitor():
 
 start_background_monitor()
 
-# 1. 状态初始化
+# 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'last_candidates' not in st.session_state: st.session_state.last_candidates = None
 if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
+if 'current_date_view' not in st.session_state: st.session_state.current_date_view = ""
 
-# 2. 核心模块
+# 核心模块
 ads_module = AutoMetaADS()
 campaign_manager = CampaignManager()
 
@@ -68,7 +68,7 @@ def load_config():
 def save_config(config):
     with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=2)
 
-# 4. 侧边栏
+# 侧边栏
 with st.sidebar:
     st.title("🚀 Meta ADS")
     page = st.radio("功能模式", ["💬 AI 投流助手", "📊 数据看板", "⚙️ 系统设置"], index=0)
@@ -76,7 +76,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"🌍 {cfg['default'].get('country')} | 💰 ${cfg['default'].get('daily_budget')}")
 
-# 5. 主区域内容
+# 主区域内容
 if page == "💬 AI 投流助手":
     st.title("💬 AI 投流助手")
     for i, chat in enumerate(st.session_state.chat_history):
@@ -117,29 +117,35 @@ if page == "💬 AI 投流助手":
 
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
-    
-    # 🚀 改进：时区适配日期选择
     user_tz = timezone(timedelta(hours=-8))
     today_user = datetime.now(user_tz)
     
     date_col1, date_col2 = st.columns([1, 4])
     selected_day = date_col1.selectbox("查看日期", ["昨天", "今天"], index=0)
-    
     target_date = (today_user - timedelta(days=1)) if selected_day == "昨天" else today_user
     date_str = target_date.strftime('%Y-%m-%d')
-    date_col2.info(f"📅 正在展示 {selected_day} ({date_str}) 的投放数据 (基于 UTC-8)")
+    date_col2.info(f"📅 正在展示 {selected_day} ({date_str}) 的投放数据 (UTC-8)")
 
-    # 重新加载逻辑 (考虑日期切换)
-    if 'current_date_view' not in st.session_state: st.session_state.current_date_view = ""
-    
     if st.session_state.current_date_view != date_str or not st.session_state.campaign_list:
-        with st.spinner(f"正在拉取 {date_str} 数据..."):
+        with st.spinner(f"拉取 {date_str} 数据..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
-            # 这里的 get_yesterday_insights 实际需要接收日期参数
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
             st.session_state.current_date_view = date_str
 
-    # --- 🤖 智能调优 (集成批量操作) ---
+    # --- 🌟 [MANDATORY] 顶部 KPI 汇总项 ---
+    if st.session_state.yesterday_insights:
+        ins_map = st.session_state.yesterday_insights
+        total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
+        total_installs = sum(ins.get('installs', 0) for ins in ins_map.values())
+        avg_roi = sum(ins.get('roi', 0) for ins in ins_map.values()) / len(ins_map) if ins_map else 0
+        avg_cpi = total_spend / total_installs if total_installs > 0 else 0
+
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric(f"{selected_day}总消耗", f"${total_spend:,.2f}")
+        kpi2.metric(f"{selected_day}总安装", f"{int(total_installs):,}")
+        kpi3.metric("平均 ROI", f"{avg_roi:.2f}")
+        kpi4.metric("平均 CPI", f"${avg_cpi:.2f}")
+
     st.subheader("🤖 智能调优建议")
     c1, c2 = st.columns([1, 1])
     if c1.button("🔍 扫描分析风险项", type="primary", width='stretch'):
@@ -148,11 +154,10 @@ elif page == "📊 数据看板":
             st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(st.session_state.campaign_list, st.session_state.yesterday_insights, history)
     
     if st.session_state.pending_actions:
-        # 🚀 核心新增：批量优化按钮
         safe_actions = [a for a in st.session_state.pending_actions if not a.get('risk')]
         if safe_actions and c2.button(f"⚡ 一键执行 {len(safe_actions)} 项安全优化", width='stretch'):
             for act in safe_actions: campaign_manager.execute_action(act)
-            st.success(f"已批量执行 {len(safe_actions)} 项优化！"); st.session_state.pending_actions = []; st.rerun()
+            st.success(f"已执行 {len(safe_actions)} 项优化！"); st.session_state.pending_actions = []; st.rerun()
 
         for i, act in enumerate(st.session_state.pending_actions):
             risk_text = "⚠️ [高支出需审批]" if act.get('risk') else "💡 [建议执行]"
@@ -163,15 +168,11 @@ elif page == "📊 数据看板":
     else: st.info("当前运行平稳。")
 
     st.divider()
-    
-    # 🚀 找回丢失的手动刷新按钮
-    if st.button("🔄 手动刷新详细数据", width='stretch'):
+    if st.button("🔄 手动刷新 Meta 详细数据", width='stretch'):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
         st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
         st.rerun()
 
-
-    # --- 🌟 全指标看板 (15 指标补完版) ---
     if st.session_state.campaign_list:
         rows = []
         insights = st.session_state.yesterday_insights
@@ -231,4 +232,4 @@ elif page == "⚙️ 系统设置":
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("已保存"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.1 | 全指标批量调优版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.3 | 零回退稳定版</div>", unsafe_allow_html=True)

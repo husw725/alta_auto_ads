@@ -76,7 +76,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"🌍 {cfg['default'].get('country')} | 💰 ${cfg['default'].get('daily_budget')}")
 
-# 主区域内容
+# AI 助手页面
 if page == "💬 AI 投流助手":
     st.title("💬 AI 投流助手")
     for i, chat in enumerate(st.session_state.chat_history):
@@ -115,23 +115,19 @@ if page == "💬 AI 投流助手":
                 st.error(f"❌ {result}"); st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {result}"})
         st.rerun()
 
+# 数据看板页面
 elif page == "📊 数据看板":
-    # 🚀 改进：精准对齐 Meta 账户时区 (UTC-8)
+    st.title("📊 广告效果数据中心")
     user_tz = timezone(timedelta(hours=-8))
     now_user = datetime.now(user_tz)
     today_str = now_user.strftime('%Y-%m-%d')
     yesterday_str = (now_user - timedelta(days=1)).strftime('%Y-%m-%d')
 
     date_col1, date_col2 = st.columns([2, 3])
-    # 在选项中直接标出日期，防止歧义
-    date_options = {
-        f"今天 ({today_str})": today_str,
-        f"昨天 ({yesterday_str})": yesterday_str
-    }
+    date_options = {f"今天 ({today_str})": today_str, f"昨天 ({yesterday_str})": yesterday_str}
     selected_label = date_col1.selectbox("查看日期 (Meta 账户时区)", list(date_options.keys()), index=0)
     date_str = date_options[selected_label]
     selected_day = "今天" if date_str == today_str else "昨天"
-
     date_col2.info(f"统计口径：**{selected_label}** | 参考时区：**UTC-8 (PST)**")
 
     if st.session_state.current_date_view != date_str or not st.session_state.campaign_list:
@@ -140,14 +136,12 @@ elif page == "📊 数据看板":
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
             st.session_state.current_date_view = date_str
 
-    # --- 🌟 [MANDATORY] 顶部 KPI 汇总项 ---
     if st.session_state.yesterday_insights:
         ins_map = st.session_state.yesterday_insights
         total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
         total_installs = sum(ins.get('installs', 0) for ins in ins_map.values())
         avg_roi = sum(ins.get('roi', 0) for ins in ins_map.values()) / len(ins_map) if ins_map else 0
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
-
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         kpi1.metric(f"{selected_day}总消耗", f"${total_spend:,.2f}")
         kpi2.metric(f"{selected_day}总安装", f"{int(total_installs):,}")
@@ -166,9 +160,8 @@ elif page == "📊 数据看板":
         if safe_actions and c2.button(f"⚡ 一键执行 {len(safe_actions)} 项安全优化", width='stretch'):
             for act in safe_actions: campaign_manager.execute_action(act)
             st.success(f"已执行 {len(safe_actions)} 项优化！"); st.session_state.pending_actions = []; st.rerun()
-
         for i, act in enumerate(st.session_state.pending_actions):
-            risk_text = "⚠️ [高支出需审批]" if act.get('risk') else "💡 [建议执行]"
+            risk_text = "⚠️ [需审批]" if act.get('risk') else "💡 [建议]"
             with st.expander(f"{risk_text} {act['type']}: {act['name']}", expanded=True):
                 st.write(f"原因: {act['reason']}")
                 if st.button("✅ 批准执行", key=f"pact_{i}"):
@@ -195,7 +188,6 @@ elif page == "📊 数据看板":
                 "CPI": f"${ins.get('cpi', 0):.2f}", "CPP": f"${ins.get('cpp', 0):.2f}"
             })
         st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
-
         st.subheader("⚙️ 生命周期管理")
         for index, row in pd.DataFrame(rows).iterrows():
             cid, name, status = row['广告id'], row['广告名称'], row['状态']
@@ -210,10 +202,11 @@ elif page == "📊 数据看板":
             with cl4:
                 del_k = f"del_{cid}"
                 if st.session_state.get(del_k):
-                    if st.button("🔥 删", key=f"fdel_{cid}", type="primary"): 
-                        if campaign_manager.delete_campaign(cid): st.rerun()
-                    if st.button("返", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
-                elif st.button("🗑️ 删", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
+                    if st.button("🔥 确认删除", key=f"fdel_{cid}", type="primary"):
+                        if campaign_manager.delete_campaign(cid):
+                            st.success("已永久删除"); st.session_state[del_k] = False; st.rerun()
+                    if st.button("取消", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
+                elif st.button("🗑️ 删除", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
             st.divider()
 
 elif page == "⚙️ 系统设置":
@@ -233,11 +226,11 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效"); st.rerun()
     with st.expander("📅 定时日报设置", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        st.write(f"**任务状态**: ⚡ 正常运行 (上次成功: {last_sent})")
+        st.write(f"**任务健康度**: ⚡ 锁定 UTC-8 正常运行 (上次成功: {last_sent})")
         if st.button("🧪 立即测试日报发送", width='stretch'): run_job(is_test=True); st.success("指令已发出！")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("已保存"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.3 | 零回退稳定版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.6 | 零回退终极版</div>", unsafe_allow_html=True)

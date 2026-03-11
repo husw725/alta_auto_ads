@@ -121,7 +121,7 @@ elif page == "📊 数据看板":
     today_user = datetime.now(user_tz)
     
     date_col1, date_col2 = st.columns([1, 4])
-    selected_day = date_col1.selectbox("查看日期", ["昨天", "今天"], index=0)
+    selected_day = date_col1.selectbox("查看日期", ["昨天", "今天"], index=1)
     target_date = (today_user - timedelta(days=1)) if selected_day == "昨天" else today_user
     date_str = target_date.strftime('%Y-%m-%d')
     date_col2.info(f"📅 正在展示 {selected_day} ({date_str}) 的投放数据 (UTC-8)")

@@ -72,13 +72,18 @@ def run_job(is_test=False):
         total_installs = sum(ins.get('installs', 0) for ins in insights.values())
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
         
-        # 4. 构建报表 (Top 5)
+        # 4. 构建报表 (仅展示激活中的 Top 5)
         details = ""
-        sorted_c = sorted(campaigns, key=lambda x: insights.get(x['id'], {}).get('spend', 0), reverse=True)
+        # 🚀 改进：只筛选正在运行的广告进入详情列表
+        active_campaigns = [c for c in campaigns if c.get('effective_status') == 'ACTIVE']
+        sorted_c = sorted(active_campaigns, key=lambda x: insights.get(x['id'], {}).get('spend', 0), reverse=True)
+        
         for c in sorted_c[:5]:
             ins = insights.get(c['id'], {})
             details += f"**{c['name']}**\n"
             details += f"- 消耗: `${ins.get('spend',0):.2f}` | 安装: `{ins.get('installs',0)}` | CPI: `${ins.get('cpi',0):.2f}`\n\n"
+
+        if not details: details = "_今日暂无运行中的重点项目_\n"
 
         report_md = f"""# 📊 Meta 投流智能调优日报
 > 📅 日期: {datetime.now().strftime('%Y-%m-%d')}

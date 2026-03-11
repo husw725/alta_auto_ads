@@ -3,11 +3,12 @@ import json
 import requests
 import subprocess
 import platform
+import sys
 from datetime import datetime
 from core.campaign_manager import CampaignManager
 
 def run_job(is_test=False):
-    """日报核心逻辑 (全平台自适应版)"""
+    """日报核心逻辑 (全平台自适应 + 虚拟环境继承版)"""
     try:
         config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
         if not os.path.exists(config_path): return
@@ -47,15 +48,14 @@ def run_job(is_test=False):
             ins = insights.get(c['id'], {})
             details += f"**{c['name']}**\n- 消耗: `${ins.get('spend',0):.2f}` | 安装: `{ins.get('installs',0)}` | CPI: `${ins.get('cpi',0):.2f}`\n\n"
 
-        report_md = f"# 📊 Meta 智能调优日报\n> 📅 {datetime.now().strftime('%Y-%m-%d')}\n\n## 📈 表现: Spend `${total_spend:.2f}` | Install `{total_installs}` | Avg CPI `${avg_cpi:.2f}`\n\n## 🤖 调优战报\n{executed_log}\n## 🛑 需审批\n{awaiting_approval_log}\n## 🔍 Top 5 详情\n{details}\n---\n*Auto Meta ADS v2.5.4*"
+        report_md = f"# 📊 Meta 智能调优日报\n> 📅 {datetime.now().strftime('%Y-%m-%d')}\n\n## 📈 表现: Spend `${total_spend:.2f}` | Install `{total_installs}` | Avg CPI `${avg_cpi:.2f}`\n\n## 🤖 调优战报\n{executed_log}\n## 🛑 需审批\n{awaiting_approval_log}\n## 🔍 Top 5 详情\n{details}\n---\n*Auto Meta ADS v2.5.5*"
 
-        # 🚀 4. 全平台自适应发送逻辑
+        # 🚀 4. 全平台自适应发送逻辑 (继承当前 venv)
         webhook = report_cfg.get('webhook_url')
         if webhook:
-            # 根据系统选择 python 命令
-            py_cmd = "python" if platform.system() == "Windows" else "python3"
+            # 💡 核心改进：使用 sys.executable 确保永远使用当前 .venv 中的 python
+            py_cmd = sys.executable
             
-            # 自动定位发送脚本 (兼容 Windows 和 macOS)
             home = os.path.expanduser("~")
             sender_path = os.path.join(home, ".gemini", "skills", "dingtalk-sender", "scripts", "send.py")
             

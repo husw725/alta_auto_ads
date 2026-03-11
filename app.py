@@ -13,54 +13,35 @@ from datetime import datetime, timedelta, timezone
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# 获取当前脚本的绝对路径，确保所有配置读写一致
+# 绝对路径锁定
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'config.json')
 
-# --- 🚀 智能指纹版监控引擎 (2.7.4 路径增强版) ---
+# --- 🚀 内部监控引擎 ---
 @st.cache_resource
 def start_background_monitor():
     def monitor_loop():
         log_file = os.path.join(BASE_DIR, "monitor_debug.log")
         user_tz = timezone(timedelta(hours=-8))
         last_trigger_fingerprint = "" 
-        
-        print(f"🚀 [System] 内部监控引擎已启动，路径锁定: {CONFIG_PATH}")
-        
         while True:
             try:
                 now_user = datetime.now(user_tz)
                 current_time = now_user.strftime("%H:%M")
                 today = now_user.strftime("%Y-%m-%d")
-                
                 if not os.path.exists(CONFIG_PATH):
                     time.sleep(30); continue
-                
-                with open(CONFIG_PATH, 'r') as f:
-                    cfg = json.load(f)
-                
+                with open(CONFIG_PATH, 'r') as f: cfg = json.load(f)
                 target_time = cfg.get('report', {}).get('send_time', '10:25')
                 enabled = cfg.get('report', {}).get('enabled', True)
                 current_fingerprint = f"{today}_{target_time}"
-                
-                # 记录详细日志
-                with open(log_file, "a") as f:
-                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 机器={current_time} | 目标={target_time} | 状态={'ON' if enabled else 'OFF'}\n")
-                
-                # 触发逻辑
+                with open(log_file, "a") as f: f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: {current_time} | {target_time}\n")
                 if enabled and current_time == target_time and last_trigger_fingerprint != current_fingerprint:
-                    with open(log_file, "a") as f: f.write(f"🎯 [TRIGGER] 时间匹配！正在调用 run_job...\n")
                     run_job(is_test=False)
                     last_trigger_fingerprint = current_fingerprint
-                    with open(log_file, "a") as f: f.write(f"✅ [SUCCESS] 任务完成。\n")
-                
-            except Exception as e:
-                with open(log_file, "a") as f: f.write(f"❌ [ERROR] 监控异常: {str(e)}\n")
-            
+            except: pass
             time.sleep(20)
-
-    t = threading.Thread(target=monitor_loop, daemon=True)
-    t.start()
+    threading.Thread(target=monitor_loop, daemon=True).start()
     return True
 
 start_background_monitor()
@@ -72,17 +53,13 @@ if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块初始化
+# 2. 核心模块
 ads_module = AutoMetaADS()
 campaign_manager = CampaignManager()
 
 def load_config():
     if not os.path.exists('config'): os.makedirs('config')
-    default_template = {
-        "default": {"country": "US", "daily_budget": 50, "optimization_goal": "APP_INSTALLS"},
-        "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0},
-        "report": {"enabled": True, "send_time": "10:25", "webhook_url": "", "last_sent": ""}
-    }
+    default_template = {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0}, "report": {"enabled": True, "send_time": "10:25", "webhook_url": "", "last_sent": ""}}
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'w') as f: json.dump(default_template, f, indent=2)
         return default_template
@@ -111,9 +88,8 @@ if page == "💬 AI 投流助手":
                     st.write(f"确认投流: **{res.get('drama')}**")
                     if st.form_submit_button("🚀 启动并激活 Campaign"):
                         with st.spinner("执行中..."):
-                            thumb_url = res.get('video_detail', {}).get('cover_url')
-                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'], thumb_url)
-                        if c_res.get('status') == 'success': st.success(f"✅ 已激活！ID: {c_res.get('campaign_id')}")
+                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'], res.get('video_detail', {}).get('cover_url'))
+                        if c_res.get('status') == 'success': st.success("✅ 已激活！")
                         else: st.error(f"❌ 失败: {c_res['error']}")
 
     if prompt := st.chat_input("输入剧名或编号..."):
@@ -134,8 +110,7 @@ if page == "💬 AI 投流助手":
                 st.session_state.chat_history.append({"role": "assistant", "content": f"### ✅ 找到素材：{result['drama']}", "ad_result": result})
             elif isinstance(result, dict) and result.get('error_type') == 'multiple_dramas':
                 st.session_state.last_candidates = result['candidates']
-                st.markdown(result['message'])
-                st.session_state.chat_history.append({"role": "assistant", "content": result['message']})
+                st.markdown(result['message']); st.session_state.chat_history.append({"role": "assistant", "content": result['message']})
             else:
                 st.error(f"❌ {result}"); st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {result}"})
         st.rerun()
@@ -143,44 +118,35 @@ if page == "💬 AI 投流助手":
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     if not st.session_state.campaign_list:
-        with st.spinner("同步 Meta 表现..."):
+        with st.spinner("同步数据..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
             st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
 
+    # --- 🤖 智能调优 (集成批量操作) ---
     st.subheader("🤖 智能调优建议")
-    if st.button("🔍 扫描分析风险项", type="primary"):
-        with st.spinner("正在分析数据..."):
+    c1, c2 = st.columns([1, 1])
+    if c1.button("🔍 扫描分析风险项", type="primary", width='stretch'):
+        with st.spinner("分析中..."):
             history = campaign_manager.get_historical_insights()
             st.session_state.pending_actions = campaign_manager.evaluate_optimization_rules(st.session_state.campaign_list, st.session_state.yesterday_insights, history)
     
     if st.session_state.pending_actions:
+        # 🚀 核心新增：批量优化按钮
+        safe_actions = [a for a in st.session_state.pending_actions if not a.get('risk')]
+        if safe_actions and c2.button(f"⚡ 一键执行 {len(safe_actions)} 项安全优化", width='stretch'):
+            for act in safe_actions: campaign_manager.execute_action(act)
+            st.success(f"已批量执行 {len(safe_actions)} 项优化！"); st.session_state.pending_actions = []; st.rerun()
+
         for i, act in enumerate(st.session_state.pending_actions):
             risk_text = "⚠️ [高支出需审批]" if act.get('risk') else "💡 [建议执行]"
             with st.expander(f"{risk_text} {act['type']}: {act['name']}", expanded=True):
-                st.markdown(f"原因: {act['reason']}")
+                st.write(f"原因: {act['reason']}")
                 if st.button("✅ 批准执行", key=f"pact_{i}"):
-                    if campaign_manager.execute_action(act):
-                        st.success("指令已执行"); st.session_state.pending_actions.pop(i); st.rerun()
-    else: st.info("当前运行平稳，暂无建议。")
+                    if campaign_manager.execute_action(act): st.success("已执行"); st.session_state.pending_actions.pop(i); st.rerun()
+    else: st.info("当前运行平稳。")
 
     st.divider()
-    if st.session_state.campaign_list:
-        ins_map = st.session_state.yesterday_insights
-        total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
-        total_installs = sum(ins.get('installs', 0) for ins in ins_map.values())
-        avg_roi = sum(ins.get('roi', 0) for ins in ins_map.values()) / len(ins_map) if ins_map else 0
-        avg_cpi = total_spend / total_installs if total_installs > 0 else 0
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("昨日总消耗", f"${total_spend:,.2f}")
-        m2.metric("昨日总安装", f"{int(total_installs):,}")
-        m3.metric("平均 ROI", f"{avg_roi:.2f}")
-        m4.metric("平均 CPI", f"${avg_cpi:.2f}")
-
-    if st.button("🔄 手动刷新详细数据", width='stretch'):
-        st.session_state.campaign_list = campaign_manager.get_all_campaigns()
-        st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
-        st.rerun()
-
+    # --- 🌟 全指标看板 (15 指标补完版) ---
     if st.session_state.campaign_list:
         rows = []
         insights = st.session_state.yesterday_insights
@@ -188,65 +154,56 @@ elif page == "📊 数据看板":
             cid, ins = c.get('id'), insights.get(c.get('id'), {})
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
             rows.append({
-                "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'),
-                "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
-                "广告花费spend": ins.get('spend', 0), "点击量click": ins.get('clicks', 0),
-                "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装量install": ins.get('installs', 0),
-                "投资回报率roi": f"{ins.get('roi', 0):.2f}", "单次安装成本cpi": f"${ins.get('cpi', 0):.2f}"
+                "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'), "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
+                "花费spend": ins.get('spend', 0), "预算budget": float(c.get('daily_budget', 0)) / 100, "点击click": ins.get('clicks', 0),
+                "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装install": ins.get('installs', 0), "ROI": f"{ins.get('roi', 0):.2f}",
+                "转化率cvr": f"{ins.get('cvr', 0)*100:.2f}%", "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}",
+                "CPI": f"${ins.get('cpi', 0):.2f}", "CPP": f"${ins.get('cpp', 0):.2f}"
             })
         st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
         st.subheader("⚙️ 生命周期管理")
         for index, row in pd.DataFrame(rows).iterrows():
             cid, name, status = row['广告id'], row['广告名称'], row['状态']
-            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-            with c1: st.write(f"**{name}**")
-            with c2:
+            cl1, cl2, cl3, cl4 = st.columns([3, 1, 1, 1])
+            with cl1: st.write(f"**{name}**")
+            with cl2:
                 if st.button("🟢 激活", key=f"act_{cid}", disabled=(status=='ACTIVE')):
                     if campaign_manager.update_campaign_status(cid, "ACTIVE"): st.rerun()
-            with c3:
+            with cl3:
                 if st.button("🟡 暂停", key=f"pau_{cid}", disabled=(status=='PAUSED')):
                     if campaign_manager.update_campaign_status(cid, "PAUSED"): st.rerun()
-            with c4:
-                del_key = f"del_confirm_{cid}"
-                if st.session_state.get(del_key):
-                    if st.button("🔥 确认删除", key=f"fdel_{cid}", type="primary"):
+            with cl4:
+                del_k = f"del_{cid}"
+                if st.session_state.get(del_k):
+                    if st.button("🔥 删", key=f"fdel_{cid}", type="primary"): 
                         if campaign_manager.delete_campaign(cid): st.rerun()
-                    if st.button("取消", key=f"cdel_{cid}"):
-                        st.session_state[del_key] = False; st.rerun()
-                else:
-                    if st.button("🗑️ 删除", key=f"pre_{cid}"):
-                        st.session_state[del_key] = True; st.rerun()
+                    if st.button("返", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
+                elif st.button("🗑️ 删", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
             st.divider()
 
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    with st.expander("🚀 投流基础策略", expanded=True):
+    with st.expander("🚀 基础策略", expanded=True):
         c1, c2 = st.columns(2)
         d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU"], index=0)
         d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
         if st.button("💾 保存基础"):
             config['default'].update({"country": d_country, "daily_budget": d_budget}); save_config(config); st.success("已保存"); st.rerun()
-    with st.expander("🤖 智能风控策略", expanded=True):
+    with st.expander("🤖 智能风控", expanded=True):
         c1, c2 = st.columns(2)
         cpi_t = c1.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
         min_s = c2.number_input("最小判定消耗", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)))
         if st.button("💾 保存风控"):
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效"); st.rerun()
-    with st.expander("📅 定时日报设置 (智能对时版)", expanded=True):
+    with st.expander("📅 定时日报设置", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        st.write(f"**任务健康度**: ⚡ UTC-8 守护中 (上次成功: {last_sent})")
-        
-        # 🚀 调试工具：立即模拟触发一次
-        if st.button("🧪 立即执行一次日报测试 (不影响定时)", width='stretch'):
-            with st.spinner("正在强制调起 run_job..."):
-                run_job(is_test=True)
-                st.success("✅ 测试指令已发送，请检查控制台和钉钉！")
-
+        st.write(f"**任务状态**: ⚡ 正常运行 (上次成功: {last_sent})")
+        if st.button("🧪 立即测试日报发送", width='stretch'): run_job(is_test=True); st.success("指令已发出！")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
-        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
-        if st.button("💾 保存日报配置"):
-            config['report'].update({"webhook_url": webhook, "send_time": send_time})
-            save_config(config); st.success("✅ 设置已保存！"); st.rerun()
+        send_time = st.text_input("时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
+        if st.button("💾 保存日报"):
+            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("已保存"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.7.4 | 全路径诊断测试版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.8.1 | 全指标批量调优版</div>", unsafe_allow_html=True)

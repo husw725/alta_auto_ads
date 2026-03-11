@@ -31,7 +31,13 @@ def send_dingtalk_message(webhook_url, content, title="Meta 投流日报"):
 def run_job(is_test=False):
     """日报核心逻辑 (全自研集成版: 零外部依赖)"""
     try:
-        # 获取绝对路径锁定配置文件
+        # 0. 🚀 锁定用户时区 (UTC-8)
+        from datetime import timezone, timedelta
+        user_tz = timezone(timedelta(hours=-8))
+        now_user = datetime.now(user_tz)
+        yesterday_str = (now_user - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # 1. 加载配置
         base_dir = os.path.abspath(os.path.dirname(__file__))
         config_path = os.path.join(base_dir, 'config', 'config.json')
         
@@ -46,10 +52,11 @@ def run_job(is_test=False):
         if not report_cfg.get('enabled') and not is_test:
             return
 
-        # 1. 初始化核心
+        # 2. 初始化核心并指定日期
         cm = CampaignManager()
         campaigns = cm.get_all_campaigns()
-        insights = cm.get_yesterday_insights()
+        # 🚀 改进：机器人调优扫描精准锁定在 UTC-8 昨天
+        insights = cm.get_yesterday_insights(yesterday_str)
         history = cm.get_historical_insights()
         
         # 2. 智能调优 (2.0 逻辑)

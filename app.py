@@ -13,24 +13,21 @@ from datetime import datetime, timedelta, timezone
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# --- 🚀 时区兼容版监控引擎 (锁定 UTC-8) ---
+# --- 🚀 智能指纹版监控引擎 (支持即时测试) ---
 @st.cache_resource
 def start_background_monitor():
     def monitor_loop():
         log_file = "monitor_debug.log"
-        # 🚀 定义用户所在时区 (UTC-8)
         user_tz = timezone(timedelta(hours=-8))
-        print(f"🚀 [System] 监控引擎已启动，锁定时区: UTC-8")
+        # 🚀 记录“最后一次触发的时间指纹”
+        last_trigger_fingerprint = "" 
         
-        last_run_date = ""
         while True:
             try:
-                # 1. 获取用户当地时间 (精准对齐 -8)
                 now_user = datetime.now(user_tz)
                 current_time = now_user.strftime("%H:%M")
                 today = now_user.strftime("%Y-%m-%d")
                 
-                # 2. 读取配置
                 config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
                 with open(config_path, 'r') as f:
                     cfg = json.load(f)
@@ -38,28 +35,30 @@ def start_background_monitor():
                 target_time = cfg.get('report', {}).get('send_time', '10:25')
                 enabled = cfg.get('report', {}).get('enabled', True)
                 
-                # 3. 记录日志 (显示用户时间)
-                with open(log_file, "a") as f:
-                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 用户当地={current_time} | 目标={target_time} | 状态={'ON' if enabled else 'OFF'}\n")
+                # 当前尝试的指纹
+                current_fingerprint = f"{today}_{target_time}"
                 
-                # 4. 触发
-                if enabled and current_time == target_time and last_run_date != today:
-                    with open(log_file, "a") as f: f.write(f"🎯 命中！正在为用户执行日报任务...\n")
+                # 记录详细日志方便查阅
+                with open(log_file, "a") as f:
+                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 机器={current_time} | 目标={target_time} | 指纹匹配={'SAME' if current_fingerprint == last_trigger_fingerprint else 'NEW'}\n")
+                
+                # 触发条件：已开启 + 时间匹配 + 该指纹还没跑过
+                if enabled and current_time == target_time and last_trigger_fingerprint != current_fingerprint:
+                    with open(log_file, "a") as f: f.write(f"🎯 [TRIGGER] 命中目标 {target_time}，正在执行...\n")
                     run_job(is_test=False)
-                    last_run_date = today
-                    with open(log_file, "a") as f: f.write(f"✅ 执行完毕。\n")
+                    last_trigger_fingerprint = current_fingerprint # 锁定该时间点
+                    with open(log_file, "a") as f: f.write(f"✅ [SUCCESS] 任务完成，指纹锁定: {current_fingerprint}\n")
                 
             except Exception as e:
-                with open(log_file, "a") as f: f.write(f"❌ 引擎报错: {str(e)}\n")
+                with open(log_file, "a") as f: f.write(f"❌ [ERROR] 监控异常: {str(e)}\n")
             
-            # 缩短检查间隔至 30 秒，确保不漏掉那一分钟
-            time.sleep(30)
+            # 缩短至 20 秒检查一次，绝对不会漏掉
+            time.sleep(20)
 
     t = threading.Thread(target=monitor_loop, daemon=True)
     t.start()
     return True
 
-# 启动引擎
 start_background_monitor()
 
 # 1. 状态初始化
@@ -233,11 +232,10 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效")
     with st.expander("📅 定时日报设置", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        # 🚀 UI 也显示用户当地时间
-        st.write(f"**任务运行状态**: ⚡ 锁定 UTC-8 时区正常运行 (上次成功: {last_sent})")
+        st.write(f"**任务健康度**: ⚡ 锁定 UTC-8 正常运行 (上次成功: {last_sent})")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.5.3 | 时区对齐版 (UTC-8)</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.7.1 | 智能指纹调优版</div>", unsafe_allow_html=True)

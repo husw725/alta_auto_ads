@@ -116,15 +116,22 @@ if page == "💬 AI 投流助手":
         st.rerun()
 
 elif page == "📊 数据看板":
-    st.title("📊 广告效果数据中心")
+    # 🚀 改进：精准对齐 Meta 账户时区 (UTC-8)
     user_tz = timezone(timedelta(hours=-8))
-    today_user = datetime.now(user_tz)
-    
-    date_col1, date_col2 = st.columns([1, 4])
-    selected_day = date_col1.selectbox("查看日期", ["昨天", "今天"], index=1)
-    target_date = (today_user - timedelta(days=1)) if selected_day == "昨天" else today_user
-    date_str = target_date.strftime('%Y-%m-%d')
-    date_col2.info(f"📅 正在展示 {selected_day} ({date_str}) 的投放数据 (UTC-8)")
+    now_user = datetime.now(user_tz)
+    today_str = now_user.strftime('%Y-%m-%d')
+    yesterday_str = (now_user - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    date_col1, date_col2 = st.columns([2, 3])
+    # 在选项中直接标出日期，防止歧义
+    date_options = {
+        f"今天 ({today_str})": today_str,
+        f"昨天 ({yesterday_str})": yesterday_str
+    }
+    selected_label = date_col1.selectbox("查看日期 (Meta 账户时区)", list(date_options.keys()), index=0)
+    date_str = date_options[selected_label]
+
+    date_col2.info(f"统计口径：**{selected_label}** | 参考时区：**UTC-8 (PST)**")
 
     if st.session_state.current_date_view != date_str or not st.session_state.campaign_list:
         with st.spinner(f"拉取 {date_str} 数据..."):

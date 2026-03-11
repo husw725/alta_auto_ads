@@ -13,13 +13,19 @@ from datetime import datetime, timedelta, timezone
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# --- 🚀 智能指纹版监控引擎 (支持即时测试) ---
+# 获取当前脚本的绝对路径，确保所有配置读写一致
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'config.json')
+
+# --- 🚀 智能指纹版监控引擎 (2.7.4 路径增强版) ---
 @st.cache_resource
 def start_background_monitor():
     def monitor_loop():
-        log_file = "monitor_debug.log"
+        log_file = os.path.join(BASE_DIR, "monitor_debug.log")
         user_tz = timezone(timedelta(hours=-8))
         last_trigger_fingerprint = "" 
+        
+        print(f"🚀 [System] 内部监控引擎已启动，路径锁定: {CONFIG_PATH}")
         
         while True:
             try:
@@ -27,25 +33,26 @@ def start_background_monitor():
                 current_time = now_user.strftime("%H:%M")
                 today = now_user.strftime("%Y-%m-%d")
                 
-                config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
-                if not os.path.exists(config_path):
-                    time.sleep(60); continue
+                if not os.path.exists(CONFIG_PATH):
+                    time.sleep(30); continue
                 
-                with open(config_path, 'r') as f:
+                with open(CONFIG_PATH, 'r') as f:
                     cfg = json.load(f)
                 
                 target_time = cfg.get('report', {}).get('send_time', '10:25')
                 enabled = cfg.get('report', {}).get('enabled', True)
                 current_fingerprint = f"{today}_{target_time}"
                 
+                # 记录详细日志
                 with open(log_file, "a") as f:
-                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 机器={current_time} | 目标={target_time} | 指纹匹配={'SAME' if current_fingerprint == last_trigger_fingerprint else 'NEW'}\n")
+                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 机器={current_time} | 目标={target_time} | 状态={'ON' if enabled else 'OFF'}\n")
                 
+                # 触发逻辑
                 if enabled and current_time == target_time and last_trigger_fingerprint != current_fingerprint:
-                    with open(log_file, "a") as f: f.write(f"🎯 [TRIGGER] 命中目标 {target_time}，正在执行...\n")
+                    with open(log_file, "a") as f: f.write(f"🎯 [TRIGGER] 时间匹配！正在调用 run_job...\n")
                     run_job(is_test=False)
                     last_trigger_fingerprint = current_fingerprint
-                    with open(log_file, "a") as f: f.write(f"✅ [SUCCESS] 任务完成，指纹锁定: {current_fingerprint}\n")
+                    with open(log_file, "a") as f: f.write(f"✅ [SUCCESS] 任务完成。\n")
                 
             except Exception as e:
                 with open(log_file, "a") as f: f.write(f"❌ [ERROR] 监控异常: {str(e)}\n")
@@ -65,25 +72,24 @@ if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块
+# 2. 核心模块初始化
 ads_module = AutoMetaADS()
 campaign_manager = CampaignManager()
 
 def load_config():
-    config_path = 'config/config.json'
     if not os.path.exists('config'): os.makedirs('config')
     default_template = {
         "default": {"country": "US", "daily_budget": 50, "optimization_goal": "APP_INSTALLS"},
         "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5, "MIN_SPEND_FOR_JUDGE": 10.0},
         "report": {"enabled": True, "send_time": "10:25", "webhook_url": "", "last_sent": ""}
     }
-    if not os.path.exists(config_path):
-        with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
+    if not os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, 'w') as f: json.dump(default_template, f, indent=2)
         return default_template
-    with open(config_path, 'r') as f: return json.load(f)
+    with open(CONFIG_PATH, 'r') as f: return json.load(f)
 
 def save_config(config):
-    with open('config/config.json', 'w') as f: json.dump(config, f, indent=2)
+    with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=2)
 
 # 4. 侧边栏
 with st.sidebar:
@@ -220,28 +226,27 @@ elif page == "⚙️ 系统设置":
         d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU"], index=0)
         d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
         if st.button("💾 保存基础"):
-            config['default'].update({"country": d_country, "daily_budget": d_budget})
-            save_config(config)
-            st.success("已保存")
-            st.rerun() # 🚀 强制刷新
+            config['default'].update({"country": d_country, "daily_budget": d_budget}); save_config(config); st.success("已保存"); st.rerun()
     with st.expander("🤖 智能风控策略", expanded=True):
         c1, c2 = st.columns(2)
         cpi_t = c1.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
         min_s = c2.number_input("最小判定消耗", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)))
         if st.button("💾 保存风控"):
-            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s})
-            save_config(config)
-            st.success("已生效")
-            st.rerun() # 🚀 强制刷新
-    with st.expander("📅 定时日报设置", expanded=True):
+            config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效"); st.rerun()
+    with st.expander("📅 定时日报设置 (智能对时版)", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        st.write(f"**任务健康度**: ⚡ 锁定 UTC-8 正常运行 (上次成功: {last_sent})")
+        st.write(f"**任务健康度**: ⚡ UTC-8 守护中 (上次成功: {last_sent})")
+        
+        # 🚀 调试工具：立即模拟触发一次
+        if st.button("🧪 立即执行一次日报测试 (不影响定时)", width='stretch'):
+            with st.spinner("正在强制调起 run_job..."):
+                run_job(is_test=True)
+                st.success("✅ 测试指令已发送，请检查控制台和钉钉！")
+
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
-        if st.button("💾 保存日报"):
+        if st.button("💾 保存日报配置"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time})
-            save_config(config)
-            st.success("✅ 设置已保存！")
-            st.rerun() # 🚀 强制刷新
+            save_config(config); st.success("✅ 设置已保存！"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.7.3 | 即时同步增强版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.7.4 | 全路径诊断测试版</div>", unsafe_allow_html=True)

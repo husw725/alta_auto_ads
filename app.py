@@ -117,10 +117,27 @@ if page == "💬 AI 投流助手":
 
 elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
-    if not st.session_state.campaign_list:
-        with st.spinner("同步数据..."):
+    
+    # 🚀 改进：时区适配日期选择
+    user_tz = timezone(timedelta(hours=-8))
+    today_user = datetime.now(user_tz)
+    
+    date_col1, date_col2 = st.columns([1, 4])
+    selected_day = date_col1.selectbox("查看日期", ["昨天", "今天"], index=0)
+    
+    target_date = (today_user - timedelta(days=1)) if selected_day == "昨天" else today_user
+    date_str = target_date.strftime('%Y-%m-%d')
+    date_col2.info(f"📅 正在展示 {selected_day} ({date_str}) 的投放数据 (基于 UTC-8)")
+
+    # 重新加载逻辑 (考虑日期切换)
+    if 'current_date_view' not in st.session_state: st.session_state.current_date_view = ""
+    
+    if st.session_state.current_date_view != date_str or not st.session_state.campaign_list:
+        with st.spinner(f"正在拉取 {date_str} 数据..."):
             st.session_state.campaign_list = campaign_manager.get_all_campaigns()
-            st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
+            # 这里的 get_yesterday_insights 实际需要接收日期参数
+            st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
+            st.session_state.current_date_view = date_str
 
     # --- 🤖 智能调优 (集成批量操作) ---
     st.subheader("🤖 智能调优建议")
@@ -148,10 +165,11 @@ elif page == "📊 数据看板":
     st.divider()
     
     # 🚀 找回丢失的手动刷新按钮
-    if st.button("🔄 手动刷新 Meta 详细数据", width='stretch'):
+    if st.button("🔄 手动刷新详细数据", width='stretch'):
         st.session_state.campaign_list = campaign_manager.get_all_campaigns()
-        st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights()
+        st.session_state.yesterday_insights = campaign_manager.get_yesterday_insights(date_str)
         st.rerun()
+
 
     # --- 🌟 全指标看板 (15 指标补完版) ---
     if st.session_state.campaign_list:

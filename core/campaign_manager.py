@@ -48,12 +48,18 @@ class CampaignManager:
             return {'status': 'success', 'campaign_id': c_id}
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
-    def get_yesterday_insights(self):
-        """[核心] 抓取全量 15 维指标数据"""
+    def get_yesterday_insights(self, date_str=None):
+        """[核心] 精准抓取特定日期的 15 维指标数据"""
         try:
+            from datetime import datetime, timedelta, timezone
+            if not date_str:
+                user_tz = timezone(timedelta(hours=-8))
+                date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
+            
             url = f"{self.base_url}/{self.ad_account_id}/insights"
             params = {
-                'level': 'campaign', 'date_preset': 'yesterday',
+                'level': 'campaign',
+                'time_range': json.dumps({'since': date_str, 'until': date_str}),
                 'fields': 'campaign_id,spend,impressions,clicks,actions,purchase_roas',
                 'access_token': self.access_token
             }

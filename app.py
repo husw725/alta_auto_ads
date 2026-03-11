@@ -13,43 +13,44 @@ from datetime import datetime
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 旗舰版", page_icon="🦞", layout="wide")
 
-# --- 🚀 系统定时任务全自动初始化逻辑 ---
-def setup_auto_scheduler():
-    """根据操作系统自动注册定时日报任务"""
+# --- 🚀 系统定时任务同步逻辑 (支持时间更新) ---
+def setup_auto_scheduler(target_time=None):
+    """根据操作系统自动注册或更新定时日报任务"""
     try:
         current_dir = os.path.abspath(os.path.dirname(__file__))
-        send_time = "10:25" # 锁定 10:25
+        # 如果没传时间，从配置文件读
+        if not target_time:
+            with open('config/config.json', 'r') as f:
+                target_time = json.load(f).get('report', {}).get('send_time', '10:25')
+        
         system_type = platform.system()
         
         if system_type == "Windows":
-            # 1. 确保 BAT 文件存在
             bat_path = os.path.join(current_dir, "run_daily_report.bat")
             if not os.path.exists(bat_path):
                 with open(bat_path, "w") as f:
                     f.write(f"@echo off\ncd /d {current_dir}\npython daily_report_worker.py\nexit")
-            
-            # 2. 检查并创建任务 (schtasks)
-            check_cmd = f'schtasks /query /tn "AutoMetaAdsReport"'
-            if subprocess.run(check_cmd, shell=True, capture_output=True).returncode != 0:
-                create_cmd = f'schtasks /create /tn "AutoMetaAdsReport" /tr "{bat_path}" /sc daily /st {send_time} /f'
-                subprocess.run(create_cmd, shell=True)
-                print(f"✅ Windows 任务计划已注册: {send_time}")
+            # 使用 /f 强制覆盖既有任务，实现时间更新
+            create_cmd = f'schtasks /create /tn "AutoMetaAdsReport" /tr "{bat_path}" /sc daily /st {target_time} /f'
+            subprocess.run(create_cmd, shell=True, capture_output=True)
+            print(f"✅ Windows 任务同步成功: {target_time}")
         
         elif system_type in ["Darwin", "Linux"]:
-            # 1. 构建 Cron 指令
+            # 解析时间 10:25 -> 25 10
+            mm, hh = target_time.split(':')
             python_path = subprocess.check_output("which python3", shell=True).decode().strip()
-            cron_cmd = f"25 10 * * * cd {current_dir} && {python_path} daily_report_worker.py >> {current_dir}/report.log 2>&1"
+            new_cron_line = f"{mm} {hh} * * * cd {current_dir} && {python_path} daily_report_worker.py >> {current_dir}/report.log 2>&1"
             
-            # 2. 检查是否存在
-            existing_cron = subprocess.run("crontab -l", shell=True, capture_output=True).stdout.decode()
-            if "daily_report_worker.py" not in existing_cron:
-                os.system(f'(crontab -l 2>/dev/null; echo "{cron_cmd}") | crontab -')
-                print(f"✅ macOS/Linux Cron 已注册: {send_time}")
+            # 先删掉包含该脚本的旧行，再追加新行
+            current_cron = subprocess.run("crontab -l", shell=True, capture_output=True).stdout.decode()
+            filtered_cron = "\n".join([line for line in current_cron.splitlines() if "daily_report_worker.py" not in line])
+            updated_cron = (filtered_cron + "\n" + new_cron_line).strip()
+            
+            process = subprocess.Popen(['crontab', '-'], stdin=subprocess.PIPE)
+            process.communicate(input=updated_cron.encode())
+            print(f"✅ macOS/Linux Cron 同步成功: {target_time}")
     except Exception as e:
-        print(f"⚠️ 自动初始化定时任务失败: {e}")
-
-# 启动即运行自检
-setup_auto_scheduler()
+        print(f"⚠️ 任务同步失败: {e}")
 
 # 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
@@ -79,6 +80,11 @@ def load_config():
 def save_config(config):
     with open('config/config.json', 'w') as f: json.dump(config, f, indent=2)
 
+# 启动自检 (确保系统任务与配置一致)
+if 'scheduler_initialized' not in st.session_state:
+    setup_auto_scheduler()
+    st.session_state.scheduler_initialized = True
+
 # 4. 侧边栏
 with st.sidebar:
     st.title("🚀 Meta ADS")
@@ -87,7 +93,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"🌍 {cfg['default'].get('country')} | 💰 ${cfg['default'].get('daily_budget')}")
 
-# 5. 主区域内容 (保持原有逻辑...)
+# 5. 主区域内容
 if page == "💬 AI 投流助手":
     st.title("💬 AI 投流助手")
     for i, chat in enumerate(st.session_state.chat_history):
@@ -230,6 +236,10 @@ elif page == "⚙️ 系统设置":
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
-            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
+            config['report'].update({"webhook_url": webhook, "send_time": send_time})
+            save_config(config)
+            # 🚀 核心改进：保存即同步系统任务
+            setup_auto_scheduler(send_time)
+            st.success("✅ 设置已保存并同步系统任务！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.5 | 跨平台自动化环境版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.4.6 | 全量同步版</div>", unsafe_allow_html=True)

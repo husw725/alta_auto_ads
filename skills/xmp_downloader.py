@@ -17,7 +17,7 @@ class XMPDownloader:
     def _generate_sign(self, timestamp):
         return hashlib.md5(f"{self.client_secret}{timestamp}".encode('utf-8')).hexdigest()
 
-    @st.cache_data(ttl=64800, persist="disk")
+    @st.cache_data(ttl=64800)
     def fetch_folders_by_parent(_self, parent_id):
         """[OPTIMIZED] 按需获取子文件夹列表"""
         timestamp = int(time.time())
@@ -69,7 +69,7 @@ class XMPDownloader:
         materials = self._fetch_material_list_cached(folder_id)
         return sub_folders, materials
 
-    @st.cache_data(ttl=28800, persist="disk")
+    @st.cache_data(ttl=28800)
     def _fetch_material_list_cached(_self, folder_id):
         """[FIXED] 修正 folder_id 为数组格式"""
         timestamp = int(time.time())

@@ -8,54 +8,52 @@ import json
 import time
 import threading
 import re
-import platform
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# --- 🚀 增强版内部监控引擎 (带日志记录) ---
+# --- 🚀 时区兼容版监控引擎 (锁定 UTC-8) ---
 @st.cache_resource
 def start_background_monitor():
     def monitor_loop():
         log_file = "monitor_debug.log"
-        print(f"🚀 [System] 内部监控引擎已启动，心跳将记录至 {log_file}")
-        last_run_date = ""
+        # 🚀 定义用户所在时区 (UTC-8)
+        user_tz = timezone(timedelta(hours=-8))
+        print(f"🚀 [System] 监控引擎已启动，锁定时区: UTC-8")
         
+        last_run_date = ""
         while True:
             try:
-                # 1. 获取当前时间
-                now = datetime.now()
-                current_time = now.strftime("%H:%M")
-                today = now.strftime("%Y-%m-%d")
+                # 1. 获取用户当地时间 (精准对齐 -8)
+                now_user = datetime.now(user_tz)
+                current_time = now_user.strftime("%H:%M")
+                today = now_user.strftime("%Y-%m-%d")
                 
                 # 2. 读取配置
                 config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.json')
-                if not os.path.exists(config_path):
-                    with open(log_file, "a") as f: f.write(f"[{now}] ❌ 找不到配置文件: {config_path}\n")
-                    time.sleep(60); continue
-                
                 with open(config_path, 'r') as f:
                     cfg = json.load(f)
                 
                 target_time = cfg.get('report', {}).get('send_time', '10:25')
                 enabled = cfg.get('report', {}).get('enabled', True)
                 
-                # 3. 记录心跳 (方便用户核对时间)
+                # 3. 记录日志 (显示用户时间)
                 with open(log_file, "a") as f:
-                    f.write(f"[{now}] Pulse: 机器时间={current_time} | 目标时间={target_time} | 状态={'激活' if enabled else '关闭'}\n")
+                    f.write(f"[{now_user.strftime('%Y-%m-%d %H:%M:%S')}] Pulse: 用户当地={current_time} | 目标={target_time} | 状态={'ON' if enabled else 'OFF'}\n")
                 
-                # 4. 触发逻辑
+                # 4. 触发
                 if enabled and current_time == target_time and last_run_date != today:
-                    with open(log_file, "a") as f: f.write(f"[{now}] 🎯 命中目标时间！启动任务...\n")
+                    with open(log_file, "a") as f: f.write(f"🎯 命中！正在为用户执行日报任务...\n")
                     run_job(is_test=False)
                     last_run_date = today
-                    with open(log_file, "a") as f: f.write(f"[{now}] ✅ 任务执行完毕。\n")
+                    with open(log_file, "a") as f: f.write(f"✅ 执行完毕。\n")
                 
             except Exception as e:
-                with open(log_file, "a") as f: f.write(f"[{datetime.now()}] ❌ 引擎报错: {str(e)}\n")
+                with open(log_file, "a") as f: f.write(f"❌ 引擎报错: {str(e)}\n")
             
-            time.sleep(60) # 分钟级扫描即可
+            # 缩短检查间隔至 30 秒，确保不漏掉那一分钟
+            time.sleep(30)
 
     t = threading.Thread(target=monitor_loop, daemon=True)
     t.start()
@@ -64,14 +62,14 @@ def start_background_monitor():
 # 启动引擎
 start_background_monitor()
 
-# 1. 状态初始化 (保持原有逻辑...)
+# 1. 状态初始化
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'last_candidates' not in st.session_state: st.session_state.last_candidates = None
 if 'campaign_list' not in st.session_state: st.session_state.campaign_list = []
 if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insights = {}
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 
-# 2. 核心模块初始化
+# 2. 核心模块
 ads_module = AutoMetaADS()
 campaign_manager = CampaignManager()
 
@@ -86,8 +84,7 @@ def load_config():
     if not os.path.exists(config_path):
         with open(config_path, 'w') as f: json.dump(default_template, f, indent=2)
         return default_template
-    with open(config_path, 'r') as f: user_cfg = json.load(f)
-    return user_cfg
+    with open(config_path, 'r') as f: return json.load(f)
 
 def save_config(config):
     with open('config/config.json', 'w') as f: json.dump(config, f, indent=2)
@@ -236,10 +233,11 @@ elif page == "⚙️ 系统设置":
             config['strategy'].update({"CPI_THRESHOLD": cpi_t, "MIN_SPEND_FOR_JUDGE": min_s}); save_config(config); st.success("已生效")
     with st.expander("📅 定时日报设置", expanded=True):
         last_sent = config['report'].get('last_sent', '无记录')
-        st.write(f"**任务运行状态**: ⚡ 内部监控引擎正常 (上次成功: {last_sent})")
+        # 🚀 UI 也显示用户当地时间
+        st.write(f"**任务运行状态**: ⚡ 锁定 UTC-8 时区正常运行 (上次成功: {last_sent})")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
         send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！")
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.5.2 | 增强型诊断版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.5.3 | 时区对齐版 (UTC-8)</div>", unsafe_allow_html=True)

@@ -125,7 +125,13 @@ if page == "💬 AI 投流助手":
                 st.session_state.chat_history.append({"role": "assistant", "content": msg, "ad_result": result})
             elif isinstance(result, dict) and result.get('error_type') == 'multiple_dramas':
                 st.session_state.last_candidates = result['candidates']
-                st.markdown(result['message']); st.session_state.chat_history.append({"role": "assistant", "content": result['message']})
+                # 🚀 改进：构建可视化列表
+                cand_msg = result['message'] + "\n\n"
+                for idx, cand in enumerate(result['candidates']):
+                    cand_msg += f"{idx+1}. **{cand['name']}**\n"
+                cand_msg += "\n请回复编号（如 '选1'）或完整剧名。"
+                st.markdown(cand_msg)
+                st.session_state.chat_history.append({"role": "assistant", "content": cand_msg})
             else:
                 st.error(f"❌ {result}"); st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {result}"})
         st.rerun()

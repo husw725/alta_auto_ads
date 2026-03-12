@@ -12,64 +12,65 @@ from skills.copywriter import Copywriter
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 class AutoMetaADS:
-    """二级优化回归版：AI 语义匹配 + 多素材赛马引擎 (v2.10.1)"""
+    """二级优化稳健版：全语种适配 + 1-1-5 赛马 (v2.10.4)"""
     def __init__(self):
         self.xmp = XMPDownloader()
         self.writer = Copywriter()
 
     def process_request(self, prompt, enable_campaign=False):
-        """[回归重构]：恢复 AI 语义匹配逻辑"""
+        """[核心重构]：增强型路径匹配，支持全语种关键词"""
         # 1. 获取所有剧名
         root_folders = self.xmp.get_all_root_dramas()
         drama_names = [f['name'] for f in root_folders]
         
-        # 2. 🚀 使用 GPT-4o 进行语义匹配 (恢复核心能力)
+        # 2. 🚀 使用 GPT-4o 进行语义匹配
         match_result = self.writer.match_drama(prompt, drama_names)
         
         if match_result['match_type'] == 'none':
-            return False, f"未找到与 '{prompt}' 相关的剧集，请尝试输入更准确的剧名。"
+            return False, f"未找到与 '{prompt}' 相关的剧集。"
         
         if match_result['match_type'] == 'multiple':
-            # 将名称映射回原始对象
             candidates = [f for f in root_folders if f['name'] in match_result['candidates']]
             return False, {'error_type': 'multiple_dramas', 'message': f"找到多部匹配的剧集，请选择：", 'candidates': candidates}
 
-        # 3. 锁定唯一匹配的目标剧集
+        # 3. 锁定剧集
         target_name = match_result['selection']
         target_drama = next((f for f in root_folders if f['name'] == target_name), None)
-        if not target_drama: return False, "系统匹配出错，请刷新重试。"
+        if not target_drama: return False, "系统匹配出错，请重试。"
 
-        # 4. 递归向下钻取素材
-        # 匹配逻辑：Drama -> Lang (English)
-        lang_id = None
-        sub_folders, _ = self.xmp.get_contents_of_folder(target_drama['id'])
-        for f in sub_folders:
-            if 'english' in f['name'].lower() or 'en' in f['name'].lower():
-                lang_id = f['id']; break
+        # 4. 🚀 [增强] 递归向下探测素材
+        def find_materials_recursively(folder_id, depth=0):
+            if depth > 3: return None
+            
+            sub_folders, materials = self.xmp.get_contents_of_folder(folder_id)
+            videos = [m for m in materials if m.get('material_type') == 'video']
+            
+            # 如果当前层就有视频，直接返回
+            if videos: return videos
+            
+            # 搜索子目录：优先寻找“语言”目录
+            lang_keywords = ['english', 'en', '英语', 'us', 'uk', 'global']
+            for sf in sub_folders:
+                if any(kw in sf['name'].lower() for kw in lang_keywords):
+                    # 进语言目录深挖
+                    res = find_materials_recursively(sf['id'], depth + 1)
+                    if res: return res
+            
+            # 如果没找到显式语言目录，进第一个子目录试试 (兜底逻辑)
+            if sub_folders:
+                return find_materials_recursively(sub_folders[0]['id'], depth + 1)
+            
+            return None
+
+        # 开始探测
+        final_videos = find_materials_recursively(target_drama['id'])
         
-        if not lang_id: return False, f"在该剧集下未找到英语 (English) 素材目录。"
+        if not final_videos:
+            return False, f"在剧集 '{target_name}' 下未探测到任何视频素材，请检查 XMP 目录结构。"
 
-        # 深度探测视频
-        sub_f, materials = self.xmp.get_contents_of_folder(lang_id)
-        if not materials and sub_f:
-            # 进第一个子目录（通常是设计师目录）
-            designer_id = sub_f[0]['id']
-            # 查找日期文件夹
-            d_folders, _ = self.xmp.fetch_folders_by_parent(designer_id)
-            date_folders = [f for f in d_folders if re.match(r'^\d{4}$', f['name'])]
-            if date_folders:
-                date_folders.sort(key=lambda x: x['name'], reverse=True)
-                final_id = date_folders[0]['id']
-            else:
-                final_id = designer_id
-            _, materials = self.xmp.get_contents_of_folder(final_id)
-
-        # 5. 🚀 1-1-5 赛马采样 (保留新功能)
-        video_materials = [m for m in materials if m.get('material_type') == 'video']
-        if not video_materials: return False, f"在目录中未找到有效的视频素材。"
-
-        sample_size = min(5, len(video_materials))
-        selected_mats = random.sample(video_materials, sample_size)
+        # 5. 🚀 1-1-5 赛马采样
+        sample_size = min(5, len(final_videos))
+        selected_mats = random.sample(final_videos, sample_size)
         
         result_materials = []
         for m in selected_mats:

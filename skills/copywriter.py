@@ -12,21 +12,30 @@ class Copywriter:
         self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
     def generate_batch_copy(self, drama_name, target_language="英语", count=5):
-        """[核心] 一次性生成多套不同角度的翻译文案"""
+        """[核心] 以投流专家身份一次性生成多套高转化文案"""
         prompt = f"""
-        你是一个全球顶级的短剧投流专家。请为短剧《{drama_name}》生成 {count} 套 Meta 广告文案。
-        要求：
-        1. 目标语言：必须完全使用【{target_language}】撰写。
-        2. 目标应用：AltaTV (短剧 App)。
-        3. 文案风格：每套文案的切入点必须不同（如：悬疑钩子、情感共鸣、霸总反转、剧情高潮、App 强推）。
-        4. 格式规范：
-           - Headline: 25个字符以内，极具冲击力。
-           - Primary Text: 125个字符以内，引导用户下载观看。
+        # Role
+        你是一位拥有10年经验的 Meta 全球性能广告专家 (Performance Marketing Expert)，专注于短剧 (ReelShort/Drama) 赛道。
         
-        请严格按 JSON 输出，不要有任何额外说明：
+        # Task
+        请为短剧《{drama_name}》生成 {count} 套具有极高 CTR (点击率) 和 CVR (转化率) 的 Meta 广告文案。
+        
+        # Requirements
+        1. **目标语言**：必须完全使用【{target_language}】撰写。要求用词地道，符合当地短剧受众的阅读习惯，拒绝机械翻译。
+        2. **心理钩子 (Hooks)**：每套文案必须基于不同的转化逻辑：
+           - 版本1 (Suspense): 悬念钩子，在文案开头抛出一个无法拒绝的问题。
+           - 版本2 (Emotion): 情感共鸣，击中人性中的爱恨、背叛或反转点。
+           - 版本3 (Boss/Alpha): 霸总/强者逻辑，强调身份反差和爽点。
+           - 版本4 (FOMO): 迫切感，强调“全网都在看”或“今日高潮片段”。
+           - 版本5 (Action-Oriented): 引导逻辑，直接描述精彩剧情并强力引导下载。
+        3. **格式限制**：
+           - **Headline (标题)**: 25字符以内，像新闻头条一样具有抓手力。
+           - **Primary Text (正文)**: 125字符以内。前两行必须抓住眼球。必须包含对应用 'AltaTV' 的指引。
+        
+        # Output Format (JSON Only)
         {{
             "versions": [
-                {{"headline": "...", "primary_text": "..."}},
+                {{"headline": "冲击力标题", "primary_text": "高转化正文"}},
                 ...
             ]
         }}

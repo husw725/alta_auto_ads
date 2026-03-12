@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 # 页面配置
 st.set_page_config(page_title="Auto Meta ADS | 龙虾AI", page_icon="🦞", layout="wide")
 
-# 绝对路径锁定
+# 绝对路径
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'config.json')
 
@@ -87,12 +87,22 @@ if page == "💬 AI 投流助手":
             if chat.get("ad_result"):
                 res = chat["ad_result"]
                 with st.form(f"f_{i}"):
-                    st.write(f"确认投流: **{res.get('drama')}**")
-                    if st.form_submit_button("🚀 启动并激活 Campaign"):
-                        with st.spinner("执行中..."):
-                            c_res = campaign_manager.create_campaign(res['drama'], res['video_link'], res.get('video_detail', {}).get('cover_url'))
+                    st.markdown(f"### 🚀 赛马计划: {res['drama']}")
+                    st.info(f"系统已随机采样该目录下 **{res['count']}** 个视频，将作为一个系列同步发布。")
+                    
+                    # 🚀 [TASK 3.1] 素材展示
+                    with st.expander("查看待投素材详情"):
+                        for m_idx, mat in enumerate(res['materials']):
+                            st.write(f"{m_idx+1}. {mat['name']}")
+                            st.caption(f"链接: {mat['video_url']}")
+                    
+                    if st.form_submit_button("🔥 确认并立即投流 (一开五)"):
+                        # 🚀 [TASK 3.3] 进度反馈
+                        p_bar = st.progress(0, text="正在初始化系列与组...")
+                        with st.spinner("创建中..."):
+                            c_res = campaign_manager.create_campaign(res['drama'], res['materials'])
                         if c_res.get('status') == 'success': 
-                            st.success("✅ 已激活！")
+                            st.success(f"✅ 成功！已发布 1 个系列，包含 {c_res.get('ads_count')} 条视频广告。")
                             st.session_state.campaign_list = []
                         else: st.error(f"❌ 失败: {c_res['error']}")
 
@@ -105,13 +115,14 @@ if page == "💬 AI 投流助手":
             if m:
                 idx = int(m.group(1)) - 1
                 if 0 <= idx < len(st.session_state.last_candidates): res_name = st.session_state.last_candidates[idx]['name']
-        with st.spinner("🔍 检索素材..."):
+        with st.spinner("🔍 检索素材中..."):
             success, result = ads_module.process_request(res_name, enable_campaign=False)
         with st.chat_message("assistant"):
             if success:
                 st.session_state.last_candidates = None
-                st.markdown(f"### ✅ 找到素材：{result['drama']}")
-                st.session_state.chat_history.append({"role": "assistant", "content": f"### ✅ 找到素材：{result['drama']}", "ad_result": result})
+                msg = f"### ✅ 找到素材：{result['drama']}\n目前共采样了 **{result['count']}** 个视频。请确认发布计划："
+                st.markdown(msg)
+                st.session_state.chat_history.append({"role": "assistant", "content": msg, "ad_result": result})
             elif isinstance(result, dict) and result.get('error_type') == 'multiple_dramas':
                 st.session_state.last_candidates = result['candidates']
                 st.markdown(result['message']); st.session_state.chat_history.append({"role": "assistant", "content": result['message']})
@@ -126,7 +137,6 @@ elif page == "📊 数据看板":
     now_user = datetime.now(user_tz)
     today_str = now_user.strftime('%Y-%m-%d')
     yesterday_str = (now_user - timedelta(days=1)).strftime('%Y-%m-%d')
-
     date_col1, date_col2 = st.columns([2, 3])
     date_options = {f"今天 ({today_str})": today_str, f"昨天 ({yesterday_str})": yesterday_str}
     selected_label = date_col1.selectbox("查看日期 (Meta 账户时区)", list(date_options.keys()), index=0)
@@ -180,14 +190,18 @@ elif page == "📊 数据看板":
 
     st.divider()
     
-    # 🚀 预览展示窗口
+    # 🚀 [TASK 3.2] 多素材预览展示
     if st.session_state.active_preview:
         with st.container():
-            st.subheader(f"👁️ 广告预览: {st.session_state.active_preview['name']}")
-            components.html(st.session_state.active_preview['html'], height=600, scrolling=True)
-            if st.button("❌ 关闭预览"):
-                st.session_state.active_preview = None
-                st.rerun()
+            st.subheader(f"👁️ 素材赛马预览: {st.session_state.active_preview['campaign_name']}")
+            previews = st.session_state.active_preview['list']
+            if previews:
+                # 使用 Tabs 切换查看不同素材
+                tabs = st.tabs([p['name'] for p in previews])
+                for idx, tab in enumerate(tabs):
+                    with tab: components.html(previews[idx]['html'], height=600, scrolling=True)
+            else: st.warning("未找到该系列下的广告素材预览。")
+            if st.button("❌ 关闭预览"): st.session_state.active_preview = None; st.rerun()
         st.divider()
 
     if st.button("🔄 手动刷新 Meta 详细数据", width='stretch'):
@@ -202,8 +216,7 @@ elif page == "📊 数据看板":
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
             rows.append({
                 "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'), "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
-                "花费spend": ins.get('spend', 0), "预算budget": float(c.get('daily_budget', 0)) / 100, 
-                "曝光imps": ins.get('imps', 0), "点击click": ins.get('clicks', 0),
+                "花费spend": ins.get('spend', 0), "预算budget": float(c.get('daily_budget', 0)) / 100, "点击click": ins.get('clicks', 0),
                 "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装install": ins.get('installs', 0), "ROI": f"{ins.get('roi', 0):.2f}",
                 "转化率cvr": f"{ins.get('cvr', 0)*100:.2f}%", "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}",
                 "CPI": f"${ins.get('cpi', 0):.2f}", "CPP": f"${ins.get('cpp', 0):.2f}"
@@ -214,17 +227,14 @@ elif page == "📊 数据看板":
             cid, name, status = row['广告id'], row['广告名称'], row['状态']
             cl1, cl2, cl3, cl4, cl5 = st.columns([3, 1, 1, 1, 1])
             with cl1: st.write(f"**{name}**")
-            
             with cl2:
-                # 🚀 新增预览按钮
                 if st.button("👁️ 预览", key=f"prev_{cid}"):
-                    with st.spinner("获取预览中..."):
-                        html = campaign_manager.get_ad_preview(cid)
-                        if html:
-                            st.session_state.active_preview = {'name': name, 'html': html}
+                    with st.spinner("拉取赛马素材预览..."):
+                        preview_list = campaign_manager.get_ad_preview(cid)
+                        if preview_list:
+                            st.session_state.active_preview = {'campaign_name': name, 'list': preview_list}
                             st.rerun()
                         else: st.error("无法获取预览")
-            
             with cl3:
                 if st.button("🟢 激活", key=f"act_{cid}", disabled=(status=='ACTIVE')):
                     if campaign_manager.update_campaign_status(cid, "ACTIVE"): 
@@ -244,10 +254,8 @@ elif page == "📊 数据看板":
                         if campaign_manager.delete_campaign(cid):
                             st.session_state.campaign_list = [c for c in st.session_state.campaign_list if c.get('id') != cid]
                             st.session_state[del_k] = False; st.rerun()
-                    if st.button("返", key=f"rdel_{cid}"):
-                        st.session_state[del_k] = False; st.rerun()
-                elif st.button("🗑️ 删", key=f"pre_{cid}"):
-                    st.session_state[del_k] = True; st.rerun()
+                    if st.button("返", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
+                elif st.button("🗑️ 删", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
             st.divider()
 
 elif page == "⚙️ 系统设置":
@@ -259,7 +267,7 @@ elif page == "⚙️ 系统设置":
         d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
         if st.button("💾 保存基础"):
             config['default'].update({"country": d_country, "daily_budget": d_budget}); save_config(config); st.success("已保存"); st.rerun()
-    with st.expander("🤖 智能风控", expanded=True):
+    with st.expander("🤖 智能风控策略", expanded=True):
         c1, c2 = st.columns(2)
         cpi_t = c1.slider("CPI 阈值 ($)", 0.5, 10.0, float(config['strategy'].get('CPI_THRESHOLD', 2.0)))
         min_s = c2.number_input("最小判定消耗", value=float(config['strategy'].get('MIN_SPEND_FOR_JUDGE', 10.0)))
@@ -270,8 +278,8 @@ elif page == "⚙️ 系统设置":
         st.write(f"**任务健康度**: ⚡ 锁定 UTC-8 正常运行 (上次成功: {last_sent})")
         if st.button("🧪 立即测试日报发送", width='stretch'): run_job(is_test=True); st.success("指令已发出！")
         webhook = st.text_input("钉钉 Webhook", value=config['report'].get('webhook_url', ''))
-        send_time = st.text_input("时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
+        send_time = st.text_input("推送时间 (HH:mm)", value=config['report'].get('send_time', '10:25'))
         if st.button("💾 保存日报"):
-            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("已保存"); st.rerun()
+            config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.9.0 | 实时预览旗舰版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v2.10.0 | 1-1-5 赛马旗舰版</div>", unsafe_allow_html=True)

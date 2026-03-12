@@ -12,13 +12,13 @@ from skills.copywriter import Copywriter
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 class AutoMetaADS:
-    """二级优化稳健版：全语种适配 + 1-1-5 赛马 (v2.10.4)"""
+    """二级优化稳健版：精准语言过滤 + 1-1-5 赛马 (v2.10.6)"""
     def __init__(self):
         self.xmp = XMPDownloader()
         self.writer = Copywriter()
 
     def process_request(self, prompt, enable_campaign=False):
-        """[核心重构]：增强型路径匹配，支持全语种关键词"""
+        """[核心重构]：增强型路径匹配，带语言黑名单过滤"""
         # 1. 获取所有剧名
         root_folders = self.xmp.get_all_root_dramas()
         drama_names = [f['name'] for f in root_folders]
@@ -33,32 +33,40 @@ class AutoMetaADS:
             candidates = [f for f in root_folders if f['name'] in match_result['candidates']]
             return False, {'error_type': 'multiple_dramas', 'message': f"找到多部匹配的剧集，请选择：", 'candidates': candidates}
 
-        # 3. 锁定剧集
         target_name = match_result['selection']
         target_drama = next((f for f in root_folders if f['name'] == target_name), None)
         if not target_drama: return False, "系统匹配出错，请重试。"
 
-        # 4. 🚀 [增强] 递归向下探测素材
+        # 3. 🚀 [增强] 递归向下探测素材 (带语言隔离)
         def find_materials_recursively(folder_id, depth=0):
-            if depth > 3: return None
+            if depth > 4: return None # 深度加深到 4 层
             
             sub_folders, materials = self.xmp.get_contents_of_folder(folder_id)
             videos = [m for m in materials if m.get('material_type') == 'video']
             
-            # 如果当前层就有视频，直接返回
+            # 如果当前层就有视频，且不是明显的非英语目录，直接返回
             if videos: return videos
             
-            # 搜索子目录：优先寻找“语言”目录
+            # --- 语言分类 ---
             lang_keywords = ['english', 'en', '英语', 'us', 'uk', 'global']
+            blacklist = ['法语', '西语', '德语', '印尼语', '日语', '韩语', 'french', 'spanish', 'german', 'indonesian', 'japanese', 'korean']
+            
+            # A. 优先寻找命中关键词的文件夹
             for sf in sub_folders:
-                if any(kw in sf['name'].lower() for kw in lang_keywords):
-                    # 进语言目录深挖
+                f_name_lower = sf['name'].lower()
+                if any(kw in f_name_lower for kw in lang_keywords):
                     res = find_materials_recursively(sf['id'], depth + 1)
                     if res: return res
             
-            # 如果没找到显式语言目录，进第一个子目录试试 (兜底逻辑)
-            if sub_folders:
-                return find_materials_recursively(sub_folders[0]['id'], depth + 1)
+            # B. 如果没有显式命中，进通用文件夹，但必须避开黑名单
+            for sf in sub_folders:
+                f_name_lower = sf['name'].lower()
+                # 排除黑名单中的语言
+                if any(bk in f_name_lower for bk in blacklist):
+                    continue
+                # 排除可能是其他非英语标识的文件夹 (可选，目前先放行 generic)
+                res = find_materials_recursively(sf['id'], depth + 1)
+                if res: return res
             
             return None
 
@@ -66,9 +74,9 @@ class AutoMetaADS:
         final_videos = find_materials_recursively(target_drama['id'])
         
         if not final_videos:
-            return False, f"在剧集 '{target_name}' 下未探测到任何视频素材，请检查 XMP 目录结构。"
+            return False, f"在剧集 '{target_name}' 下未探测到有效的英语视频素材。"
 
-        # 5. 🚀 1-1-5 赛马采样
+        # 4. 🚀 1-1-5 赛马采样
         sample_size = min(5, len(final_videos))
         selected_mats = random.sample(final_videos, sample_size)
         

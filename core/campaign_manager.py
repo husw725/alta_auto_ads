@@ -125,6 +125,23 @@ class CampaignManager:
         try: return requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json().get('success', False)
         except: return False
 
+    def get_ad_preview(self, campaign_id):
+        """[增强] 获取该系列下第一个广告的实时预览 HTML"""
+        try:
+            # 1. 找广告 ID
+            ads_res = requests.get(f"{self.base_url}/{campaign_id}/ads", params={'fields': 'id', 'access_token': self.access_token}).json()
+            ad_id = ads_res.get('data', [{}])[0].get('id')
+            if not ad_id: return None
+            
+            # 2. 生成预览 HTML
+            # 使用 MOBILE_FEED_STANDARD 格式，最适合移动端剧集展示
+            prev_res = requests.get(f"{self.base_url}/{ad_id}/previews", params={
+                'ad_format': 'MOBILE_FEED_STANDARD', 
+                'access_token': self.access_token
+            }).json()
+            return prev_res.get('data', [{}])[0].get('body')
+        except: return None
+
     def execute_action(self, action):
         if action['type'] == 'PAUSE': return self.update_campaign_status(action['cid'], 'PAUSED')
         return False

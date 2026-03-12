@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化版：多语种文案 + 1-1-5 赛马投放引擎 (v2.11.3)"""
+    """二级优化稳健版：1-1-5 赛马 + 完整调优大脑 + CTR 规则 (v2.11.6)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -23,51 +23,38 @@ class CampaignManager:
     def _load_config(self):
         try:
             with open('config/config.json', 'r') as f: return json.load(f)
-        except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0}}
+        except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5}}
 
+    # --- 🚀 投放引擎 (1-1-5 模式) ---
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
-        """[核心重构] 实现 1-1-5 赛马 + 批量文案对齐 (v2.11.3)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
             country = cfg.get('country', 'US')
             budget_cents = int(cfg.get('daily_budget', 50)) * 100
             today = datetime.now().strftime('%Y%m%d')
-            
             name_base = f"{drama_name}-{country}-{today}-w2a-Auto-龙虾ai"
             
-            # 1. 创建 Campaign
             c_id = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json().get('id')
-            # 2. 创建 AdSet
             as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}), 'status': 'PAUSED', 'access_token': token}).json().get('id')
 
-            # 🚀 3. 核心改进：一次性生成批量多语种文案
             from skills.copywriter import Copywriter
             writer = Copywriter()
-            count = len(materials_list)
-            copy_res = writer.generate_batch_copy(drama_name, target_language=target_language, count=count)
+            copy_res = writer.generate_batch_copy(drama_name, target_language=target_language, count=len(materials_list))
             versions = copy_res.get('versions', [])
             
             ad_ids = []
             for idx, mat in enumerate(materials_list):
-                # 如果 AI 返回文案不足，循环使用第一套
                 curr_copy = versions[idx] if idx < len(versions) else versions[0]
-                
                 v_res = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json()
                 v_id = v_res.get('id')
                 if not v_id: continue
-                
                 img_hash = None
                 if mat['cover_url']:
                     i_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': mat['cover_url'], 'access_token': token}).json()
                     if 'images' in i_res: img_hash = i_res['images'][list(i_res['images'].keys())[0]]['hash']
                 
-                video_data = {
-                    'video_id': v_id, 
-                    'message': curr_copy.get('primary_text', 'Watch now!'), 
-                    'title': curr_copy.get('headline', f"Watch {drama_name}"), 
-                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
-                }
+                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', 'Watch!'), 'title': curr_copy.get('headline', f"Watch V{idx+1}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
                 if img_hash: video_data['image_hash'] = img_hash
                 else: video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
@@ -82,6 +69,49 @@ class CampaignManager:
             return {'status': 'error', 'error': "No ads created."}
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
+    # --- 🧠 调优大脑 (阶梯规则 + CTR 淘汰版) ---
+    def evaluate_optimization_rules(self, campaigns, insights, history=None):
+        cfg = self._load_config().get('strategy', {})
+        CPI_T = float(cfg.get('CPI_THRESHOLD', 2.0))
+        ROI_T = float(cfg.get('ROI_THRESHOLD', 0.5))
+        MIN_S = float(cfg.get('MIN_SPEND_FOR_JUDGE', 10.0))
+        actions = []
+
+        for camp in campaigns:
+            cid = camp['id']
+            if camp['effective_status'] != 'ACTIVE': continue
+            ins = insights.get(cid, {})
+            spend, cpi, roi = ins.get('spend', 0), ins.get('cpi', 0), ins.get('roi', 0)
+            ctr, imps = ins.get('ctr', 0), ins.get('imps', 0)
+            curr_budget = float(camp.get('daily_budget', 0)) / 100
+
+            # 🚀 规则 1：暂停劣质 (CPI > T 且 Spend > $50)
+            if cpi > CPI_T and spend > 50:
+                actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
+            
+            # 🚀 规则 2：低点击率淘汰 (CTR < 2.0% 且 Imps > 1000)
+            elif ctr < 0.02 and imps > 1000:
+                actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"点击率过低 ({ctr*100:.2f}%) 且曝光达标", 'risk': False})
+            
+            # 🚀 规则 3：降低预算 (CPI > T*0.8 且 Spend > $30)
+            elif cpi > (CPI_T * 0.8) and spend > 30:
+                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': curr_budget * 0.5, 'reason': "CPI 接近阈值，降预算 50%", 'risk': False})
+            
+            # 🚀 规则 4：提升预算 (CPI < T*0.6 且 ROI > Target*1.2)
+            elif spend > MIN_S and cpi < (CPI_T * 0.6) and roi > (ROI_T * 1.2):
+                new_b = curr_budget * 1.3
+                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': new_b, 'reason': f"高 ROI:{roi:.2f}，提预算 30%", 'risk': (new_b - curr_budget > 100)})
+
+            # 🚀 规则 5：趋势分析
+            if history and cid in history:
+                h = history[cid]
+                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]):
+                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
+                if len(h) >= 2 and h[-2]['imps'] > 0 and (h[-2]['imps'] - h[-1]['imps']) / h[-2]['imps'] > 0.3:
+                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'HIGHER', 'reason': "展示量骤降 > 30%"})
+        return actions
+
+    # --- 数据接口 ---
     def get_yesterday_insights(self, date_str=None):
         try:
             from datetime import datetime, timedelta, timezone
@@ -97,20 +127,10 @@ class CampaignManager:
                 spend = float(item.get('spend', 0))
                 imps = int(item.get('impressions', 1))
                 clicks = int(item.get('clicks', 0))
-                installs = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
-                purchases = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
+                inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
+                purch = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
-                
-                res[cid] = {
-                    'spend': spend, 'imps': imps, 'clicks': clicks, 
-                    'installs': installs, 'purchases': purchases, 'roi': roi,
-                    'ctr': clicks / imps if imps > 0 else 0,
-                    'cvr': installs / clicks if clicks > 0 else 0,
-                    'cpm': spend / imps * 1000 if imps > 0 else 0,
-                    'cpc': spend / clicks if clicks > 0 else 0,
-                    'cpi': spend / installs if installs > 0 else 0,
-                    'cpp': spend / purchases if purchases > 0 else 0
-                }
+                res[cid] = {'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'roi': roi, 'ctr': clicks/imps, 'cvr': inst/clicks if clicks>0 else 0, 'cpm': spend/imps*1000, 'cpc': spend/clicks if clicks>0 else 0, 'cpi': spend/inst if inst>0 else 0, 'cpp': spend/purch if purch>0 else 0}
             return res
         except: return {}
 
@@ -127,18 +147,6 @@ class CampaignManager:
                 hist[cid].append({'cpi': float(item.get('spend',0))/inst if inst>0 else 0, 'imps': int(item.get('impressions', 0))})
             return hist
         except: return {}
-
-    def evaluate_optimization_rules(self, campaigns, insights, history=None):
-        cfg = self._load_config().get('strategy', {})
-        CPI_T = float(cfg.get('CPI_THRESHOLD', 2.0))
-        actions = []
-        for camp in campaigns:
-            cid = camp['id']
-            if camp['effective_status'] != 'ACTIVE': continue
-            ins = insights.get(cid, {})
-            if ins.get('spend', 0) > 50 and ins.get('cpi', 0) > CPI_T:
-                actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${ins['cpi']:.2f}) > {CPI_T}", 'risk': (ins['spend'] > 200)})
-        return actions
 
     def get_all_campaigns(self):
         try: return sorted(requests.get(f"{self.base_url}/{self.ad_account_id}/campaigns", params={'fields': 'id,name,status,effective_status,start_time,daily_budget', 'access_token': self.access_token, 'limit': 50}).json().get('data', []), key=lambda x: x.get('start_time', '0'), reverse=True)
@@ -164,8 +172,11 @@ class CampaignManager:
         except: return False
 
     def execute_action(self, action):
-        if action['type'] == 'PAUSE': return self.update_campaign_status(action['cid'], 'PAUSED')
-        return False
+        try:
+            if action['type'] == 'PAUSE': return self.update_campaign_status(action['cid'], 'PAUSED')
+            if action['type'] == 'BUDGET': return requests.post(f"{self.base_url}/{action['cid']}", data={'daily_budget': int(action['value'] * 100), 'access_token': self.access_token}).json().get('success', False)
+            return True
+        except: return False
 
     def _get_video_thumbnail_hash_smart(self, vid, token):
         for i in range(3):

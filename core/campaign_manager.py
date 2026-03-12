@@ -94,9 +94,23 @@ class CampaignManager:
             res = {}
             for item in resp.get('data', []):
                 cid = item['campaign_id']
-                inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
+                spend = float(item.get('spend', 0))
+                imps = int(item.get('impressions', 1))
+                clicks = int(item.get('clicks', 0))
+                installs = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
+                purchases = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
-                res[cid] = {'spend': float(item.get('spend', 0)), 'installs': inst, 'roi': roi, 'cpi': float(item.get('spend', 0))/inst if inst>0 else 0, 'clicks': int(item.get('clicks', 0)), 'imps': int(item.get('impressions', 0)), 'ctr': int(item.get('clicks', 0))/int(item.get('impressions', 1))}
+                
+                res[cid] = {
+                    'spend': spend, 'imps': imps, 'clicks': clicks, 
+                    'installs': installs, 'purchases': purchases, 'roi': roi,
+                    'ctr': clicks / imps if imps > 0 else 0,
+                    'cvr': installs / clicks if clicks > 0 else 0,
+                    'cpm': spend / imps * 1000 if imps > 0 else 0,
+                    'cpc': spend / clicks if clicks > 0 else 0,
+                    'cpi': spend / installs if installs > 0 else 0,
+                    'cpp': spend / purchases if purchases > 0 else 0
+                }
             return res
         except: return {}
 

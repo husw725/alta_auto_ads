@@ -223,7 +223,8 @@ elif page == "📊 数据看板":
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
             rows.append({
                 "广告id": cid, "广告名称": c.get('name'), "状态": c.get('effective_status'), "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
-                "花费spend": ins.get('spend', 0), "预算budget": float(c.get('daily_budget', 0)) / 100, "点击click": ins.get('clicks', 0),
+                "花费spend": ins.get('spend', 0), "预算budget": float(c.get('daily_budget', 0)) / 100, 
+                "曝光imps": ins.get('imps', 0), "点击click": ins.get('clicks', 0),
                 "点击率ctr": f"{ins.get('ctr', 0)*100:.2f}%", "安装install": ins.get('installs', 0), "ROI": f"{ins.get('roi', 0):.2f}",
                 "转化率cvr": f"{ins.get('cvr', 0)*100:.2f}%", "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}",
                 "CPI": f"${ins.get('cpi', 0):.2f}", "CPP": f"${ins.get('cpp', 0):.2f}"

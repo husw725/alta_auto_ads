@@ -124,4 +124,4 @@ class AutoMetaADS:
         selected_mats = random.sample(final_videos, sample_size)
         result_mats = [{'name': m['material_name'], 'video_url': m['file_url'], 'cover_url': m.get('cover_url') or m.get('thumb_url')} for m in selected_mats]
 
-        return True, {'drama': target_name, 'count': sample_size, 'materials': result_mats}
+        return True, {'drama': target_name, 'count': sample_size, 'materials': result_mats, 'lang': target_lang}

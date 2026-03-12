@@ -100,7 +100,8 @@ if page == "💬 AI 投流助手":
                         # 🚀 [TASK 3.3] 进度反馈
                         p_bar = st.progress(0, text="正在初始化系列与组...")
                         with st.spinner("创建中..."):
-                            c_res = campaign_manager.create_campaign(res['drama'], res['materials'])
+                            # 🚀 改进：传入解析出的目标语言
+                            c_res = campaign_manager.create_campaign(res['drama'], res['materials'], target_language=res.get('lang', '英语'))
                         if c_res.get('status') == 'success': 
                             st.success(f"✅ 成功！已发布 1 个系列，包含 {c_res.get('ads_count')} 条视频广告。")
                             st.session_state.campaign_list = []

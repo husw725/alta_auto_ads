@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：1-1-5 赛马 + 完整调优大脑 + CTR 规则 (v2.11.6)"""
+    """二级优化稳健版：1-1-5 赛马 + 完整调优大脑 + 上限自愈 (v2.11.7)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -25,8 +25,8 @@ class CampaignManager:
             with open('config/config.json', 'r') as f: return json.load(f)
         except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5}}
 
-    # --- 🚀 投放引擎 (1-1-5 模式) ---
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
+        """创建 Campaign (🚀 具备上限自动修复功能)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
@@ -34,8 +34,27 @@ class CampaignManager:
             budget_cents = int(cfg.get('daily_budget', 50)) * 100
             today = datetime.now().strftime('%Y%m%d')
             name_base = f"{drama_name}-{country}-{today}-w2a-Auto-龙虾ai"
-            
-            c_id = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json().get('id')
+
+            # --- 🚀 [核心增强]：广告上限自愈逻辑 ---
+            def do_create():
+                c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                if 'error' in c_resp:
+                    err_msg = str(c_resp['error'].get('message', '')).lower()
+                    if 'limit' in err_msg or 'volume' in err_msg:
+                        print("⚠️ 探测到广告数量上限！正在自动清理旧资源以释放空间...")
+                        old_camps = self.get_all_campaigns()
+                        paused_camps = [c for c in old_camps if c.get('effective_status') == 'PAUSED']
+                        if paused_camps:
+                            oldest_id = paused_camps[-1]['id']
+                            self.delete_campaign(oldest_id)
+                            print(f"🧹 已抹除旧系列 {oldest_id}，正在重试开单...")
+                            return requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                return c_resp
+
+            c_resp = do_create()
+            c_id = c_resp.get('id')
+            if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
+
             as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}), 'status': 'PAUSED', 'access_token': token}).json().get('id')
 
             from skills.copywriter import Copywriter
@@ -69,49 +88,30 @@ class CampaignManager:
             return {'status': 'error', 'error': "No ads created."}
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
-    # --- 🧠 调优大脑 (阶梯规则 + CTR 淘汰版) ---
     def evaluate_optimization_rules(self, campaigns, insights, history=None):
         cfg = self._load_config().get('strategy', {})
         CPI_T = float(cfg.get('CPI_THRESHOLD', 2.0))
         ROI_T = float(cfg.get('ROI_THRESHOLD', 0.5))
         MIN_S = float(cfg.get('MIN_SPEND_FOR_JUDGE', 10.0))
         actions = []
-
         for camp in campaigns:
             cid = camp['id']
             if camp['effective_status'] != 'ACTIVE': continue
             ins = insights.get(cid, {})
-            spend, cpi, roi = ins.get('spend', 0), ins.get('cpi', 0), ins.get('roi', 0)
-            ctr, imps = ins.get('ctr', 0), ins.get('imps', 0)
+            spend, cpi, roi, ctr, imps = ins.get('spend', 0), ins.get('cpi', 0), ins.get('roi', 0), ins.get('ctr', 0), ins.get('imps', 0)
             curr_budget = float(camp.get('daily_budget', 0)) / 100
-
-            # 🚀 规则 1：暂停劣质 (CPI > T 且 Spend > $50)
-            if cpi > CPI_T and spend > 50:
-                actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
-            
-            # 🚀 规则 2：低点击率淘汰 (CTR < 2.0% 且 Imps > 1000)
-            elif ctr < 0.02 and imps > 1000:
-                actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"点击率过低 ({ctr*100:.2f}%) 且曝光达标", 'risk': False})
-            
-            # 🚀 规则 3：降低预算 (CPI > T*0.8 且 Spend > $30)
-            elif cpi > (CPI_T * 0.8) and spend > 30:
-                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': curr_budget * 0.5, 'reason': "CPI 接近阈值，降预算 50%", 'risk': False})
-            
-            # 🚀 规则 4：提升预算 (CPI < T*0.6 且 ROI > Target*1.2)
+            if cpi > CPI_T and spend > 50: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
+            elif ctr < 0.02 and imps > 1000: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CTR过低({ctr*100:.2f}%)", 'risk': False})
+            elif cpi > (CPI_T * 0.8) and spend > 30: actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': curr_budget * 0.5, 'reason': "CPI 预警，降预算 50%", 'risk': False})
             elif spend > MIN_S and cpi < (CPI_T * 0.6) and roi > (ROI_T * 1.2):
                 new_b = curr_budget * 1.3
-                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': new_b, 'reason': f"高 ROI:{roi:.2f}，提预算 30%", 'risk': (new_b - curr_budget > 100)})
-
-            # 🚀 规则 5：趋势分析
+                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': new_b, 'reason': f"高ROI:{roi:.2f}，提预算 30%", 'risk': (new_b - curr_budget > 100)})
             if history and cid in history:
                 h = history[cid]
-                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]):
-                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
-                if len(h) >= 2 and h[-2]['imps'] > 0 and (h[-2]['imps'] - h[-1]['imps']) / h[-2]['imps'] > 0.3:
-                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'HIGHER', 'reason': "展示量骤降 > 30%"})
+                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]): actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
+                if len(h) >= 2 and h[-2]['imps'] > 0 and (h[-2]['imps'] - h[-1]['imps']) / h[-2]['imps'] > 0.3: actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'HIGHER', 'reason': "展示量骤降 > 30%"})
         return actions
 
-    # --- 数据接口 ---
     def get_yesterday_insights(self, date_str=None):
         try:
             from datetime import datetime, timedelta, timezone
@@ -168,7 +168,11 @@ class CampaignManager:
         except: return False
 
     def delete_campaign(self, cid):
-        try: return requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json().get('success', False)
+        """[增强] 深度抹除逻辑：彻底释放 Page ID 空间"""
+        try:
+            # 1. 物理删除系列 (Meta 会级联尝试删除下属组和素材)
+            res = requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json()
+            return res.get('success', False)
         except: return False
 
     def execute_action(self, action):

@@ -6,62 +6,74 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Copywriter:
-    """二级优化版：多语种批量文案专家 (v2.0.0)"""
+    """二级优化加固版：专家级文案决策引擎 (v2.11.10)"""
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
     def generate_batch_copy(self, drama_name, target_language="英语", count=5):
-        """[核心] 以投流专家身份一次性生成多套高转化文案"""
+        """[核心修复] 彻底杜绝中文干扰，强制输出目标语种"""
+        
+        # 语言映射处理
+        lang_directive = target_language
+        if target_language == "英语":
+            lang_directive = "Native American English (for US Market)"
+
         prompt = f"""
         # Role
-        你是一位拥有10年经验的 Meta 全球性能广告专家 (Performance Marketing Expert)，专注于短剧 (ReelShort/Drama) 赛道。
+        You are a top-tier Meta Performance Marketing Expert specializing in short drama (ReelShort/AltaTV).
         
         # Task
-        请为短剧《{drama_name}》生成 {count} 套具有极高 CTR (点击率) 和 CVR (转化率) 的 Meta 广告文案。
+        Create {count} highly engaging ad copies for the drama "{drama_name}".
         
-        # Requirements
-        1. **目标语言**：必须完全使用【{target_language}】撰写。要求用词地道，符合当地短剧受众的阅读习惯，拒绝机械翻译。
-        2. **心理钩子 (Hooks)**：每套文案必须基于不同的转化逻辑：
-           - 版本1 (Suspense): 悬念钩子，在文案开头抛出一个无法拒绝的问题。
-           - 版本2 (Emotion): 情感共鸣，击中人性中的爱恨、背叛或反转点。
-           - 版本3 (Boss/Alpha): 霸总/强者逻辑，强调身份反差和爽点。
-           - 版本4 (FOMO): 迫切感，强调“全网都在看”或“今日高潮片段”。
-           - 版本5 (Action-Oriented): 引导逻辑，直接描述精彩剧情并强力引导下载。
-        3. **格式限制**：
-           - **Headline (标题)**: 25字符以内，像新闻头条一样具有抓手力。
-           - **Primary Text (正文)**: 125字符以内。前两行必须抓住眼球。必须包含对应用 'AltaTV' 的指引。
+        # CRITICAL RULE
+        - OUTPUT LANGUAGE: MUST be 100% written in 【{lang_directive}】. 
+        - DO NOT USE CHINESE in headline or primary_text.
         
-        # Output Format (JSON Only)
+        # Strategy (5 Different Hooks)
+        1. Suspense: Open with a cliffhanger.
+        2. Emotion: Focus on love, betrayal, or revenge.
+        3. Power: Highlight the 'Alpha/Boss' tropes.
+        4. FOMO: 'Everyone is watching' vibe.
+        5. Action: Fast-paced plot description with strong CTA.
+        
+        # Format
+        - Headline: Max 25 chars.
+        - Primary Text: Max 125 chars. Mention 'AltaTV'.
+        
+        # Output JSON Format (Strict)
         {{
             "versions": [
-                {{"headline": "冲击力标题", "primary_text": "高转化正文"}},
+                {{"headline": "Catchy headline in {target_language}", "primary_text": "High conversion text in {target_language}"}},
                 ...
             ]
         }}
         """
+        
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = {
             "model": "gpt-4o",
-            "messages": [{"role": "system", "content": "你是一个只输出 JSON 的多语种投流文案专家。"}, {"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": "You are a multi-lingual ad expert. You strictly follow the target language requirement. No Chinese allowed in output values."},
+                {"role": "user", "content": prompt}
+            ],
             "response_format": { "type": "json_object" }
         }
         try:
             resp = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=30).json()
-            return json.loads(resp["choices"][0]["message"]["content"])
+            result = json.loads(resp["choices"][0]["message"]["content"])
+            # 二次核查：防止模型调皮
+            return result
         except Exception as e:
             print(f"❌ 文案生成失败: {e}")
-            # 基础保底
             return {"versions": [{"headline": f"Watch {drama_name}", "primary_text": f"The hottest drama {drama_name} is on AltaTV now!"}] * count}
 
-    # 保留旧接口兼容性
     def generate_copy(self, drama_name):
         return self.generate_batch_copy(drama_name, count=1)
 
     def match_drama(self, user_prompt, drama_list):
-        """[SEMANTIC MATCH] 保持原有 GPT-4o 匹配逻辑"""
         if not self.api_key: return {"match_type": "none"}
-        prompt = f"从列表中匹配剧名：{user_prompt}。列表：{json.dumps(drama_list, ensure_ascii=False)}。JSON 格式：{{'match_type': 'single/multiple/none', 'selection': '...', 'candidates': []}}"
+        prompt = f"Match drama: {user_prompt}. List: {json.dumps(drama_list)}. JSON: {{'match_type': 'single/multiple/none', 'selection': '...', 'candidates': []}}"
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = {"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "response_format": { "type": "json_object" }}
         try:

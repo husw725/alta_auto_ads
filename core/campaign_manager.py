@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：1-1-5 赛马 + 完整调优大脑 + 上限自愈 (v2.11.7)"""
+    """二级优化稳健版：素材名动态提取文案 + 赛马 (v2.11.8)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -25,31 +25,60 @@ class CampaignManager:
             with open('config/config.json', 'r') as f: return json.load(f)
         except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5}}
 
+    def _extract_real_name_from_url(self, video_url):
+        """[核心算法] 从视频链接中剥离出纯净剧名"""
+        try:
+            filename = unquote(video_url.split('/')[-1])
+            # 去除非 ASCII 字符 (如中文备注)
+            name = filename.encode('ascii', 'ignore').decode('ascii')
+            # 替换特殊符号为空格
+            name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
+            # 处理驼峰命名
+            name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+            # 移除后缀
+            name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
+            
+            parts = name.split()
+            blacklist = {'v1','v2','v3','eng','en','us','pt','br','es','espanol','1080p','720p','60fps','30fps','short','final','fixed','export','ios','android','ad','drama','mp4','bsj','kk','alta','kkshort'}
+            
+            clean_parts = []
+            for p in parts:
+                p_lower = p.lower()
+                # 排除纯数字(日期/序号)、黑名单、单个字母
+                if re.match(r'^\d{4,12}$', p) or p_lower in blacklist or (p.isdigit() and len(p) < 5) or len(p) <= 1:
+                    continue
+                clean_parts.append(p)
+            
+            result = " ".join(clean_parts).strip()
+            return result if len(result) > 2 else None
+        except: return None
+
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
-        """创建 Campaign (🚀 具备上限自动修复功能)"""
+        """创建 Campaign (🚀 支持素材名实时动态文案)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
             country = cfg.get('country', 'US')
             budget_cents = int(cfg.get('daily_budget', 50)) * 100
             today = datetime.now().strftime('%Y%m%d')
+            
+            # --- 🚀 [核心改进]：从第一个视频中提取“真实的英文剧名”用于文案 ---
+            real_drama_name = self._extract_real_name_from_url(materials_list[0]['video_url'])
+            # 如果提取失败（比如全是中文），回退到原始剧名
+            copy_seed_name = real_drama_name if real_drama_name else drama_name
+            print(f"🎯 提取纯净剧名用于文案: [{copy_seed_name}]")
+            
+            # 基础名依然保持您的命名规范
             name_base = f"{drama_name}-{country}-{today}-w2a-Auto-龙虾ai"
 
-            # --- 🚀 [核心增强]：广告上限自愈逻辑 ---
+            # 自动修复上限
             def do_create():
-                c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
-                if 'error' in c_resp:
-                    err_msg = str(c_resp['error'].get('message', '')).lower()
-                    if 'limit' in err_msg or 'volume' in err_msg:
-                        print("⚠️ 探测到广告数量上限！正在自动清理旧资源以释放空间...")
-                        old_camps = self.get_all_campaigns()
-                        paused_camps = [c for c in old_camps if c.get('effective_status') == 'PAUSED']
-                        if paused_camps:
-                            oldest_id = paused_camps[-1]['id']
-                            self.delete_campaign(oldest_id)
-                            print(f"🧹 已抹除旧系列 {oldest_id}，正在重试开单...")
-                            return requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
-                return c_resp
+                res = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                if 'error' in res and ('limit' in str(res['error']).lower() or 'volume' in str(res['error']).lower()):
+                    old_camps = self.get_all_campaigns()
+                    paused = [c for c in old_camps if c.get('effective_status') == 'PAUSED']
+                    if paused: self.delete_campaign(paused[-1]['id']); return requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                return res
 
             c_resp = do_create()
             c_id = c_resp.get('id')
@@ -57,23 +86,25 @@ class CampaignManager:
 
             as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}), 'status': 'PAUSED', 'access_token': token}).json().get('id')
 
+            # 生成批量文案 (使用提取出的纯净名)
             from skills.copywriter import Copywriter
             writer = Copywriter()
-            copy_res = writer.generate_batch_copy(drama_name, target_language=target_language, count=len(materials_list))
+            copy_res = writer.generate_batch_copy(copy_seed_name, target_language=target_language, count=len(materials_list))
             versions = copy_res.get('versions', [])
             
             ad_ids = []
             for idx, mat in enumerate(materials_list):
-                curr_copy = versions[idx] if idx < len(versions) else versions[0]
+                curr_copy = versions[idx] if idx < len(versions) else (versions[0] if versions else {})
                 v_res = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json()
                 v_id = v_res.get('id')
                 if not v_id: continue
+                
                 img_hash = None
                 if mat['cover_url']:
                     i_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': mat['cover_url'], 'access_token': token}).json()
                     if 'images' in i_res: img_hash = i_res['images'][list(i_res['images'].keys())[0]]['hash']
                 
-                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', 'Watch!'), 'title': curr_copy.get('headline', f"Watch V{idx+1}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
+                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', f"Watch {copy_seed_name} now!"), 'title': curr_copy.get('headline', f"Watch {copy_seed_name}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
                 if img_hash: video_data['image_hash'] = img_hash
                 else: video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
@@ -87,30 +118,6 @@ class CampaignManager:
                 return {'status': 'success', 'campaign_id': c_id, 'ads_count': len(ad_ids)}
             return {'status': 'error', 'error': "No ads created."}
         except Exception as e: return {'status': 'error', 'error': str(e)}
-
-    def evaluate_optimization_rules(self, campaigns, insights, history=None):
-        cfg = self._load_config().get('strategy', {})
-        CPI_T = float(cfg.get('CPI_THRESHOLD', 2.0))
-        ROI_T = float(cfg.get('ROI_THRESHOLD', 0.5))
-        MIN_S = float(cfg.get('MIN_SPEND_FOR_JUDGE', 10.0))
-        actions = []
-        for camp in campaigns:
-            cid = camp['id']
-            if camp['effective_status'] != 'ACTIVE': continue
-            ins = insights.get(cid, {})
-            spend, cpi, roi, ctr, imps = ins.get('spend', 0), ins.get('cpi', 0), ins.get('roi', 0), ins.get('ctr', 0), ins.get('imps', 0)
-            curr_budget = float(camp.get('daily_budget', 0)) / 100
-            if cpi > CPI_T and spend > 50: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
-            elif ctr < 0.02 and imps > 1000: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CTR过低({ctr*100:.2f}%)", 'risk': False})
-            elif cpi > (CPI_T * 0.8) and spend > 30: actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': curr_budget * 0.5, 'reason': "CPI 预警，降预算 50%", 'risk': False})
-            elif spend > MIN_S and cpi < (CPI_T * 0.6) and roi > (ROI_T * 1.2):
-                new_b = curr_budget * 1.3
-                actions.append({'type': 'BUDGET', 'cid': cid, 'name': camp['name'], 'value': new_b, 'reason': f"高ROI:{roi:.2f}，提预算 30%", 'risk': (new_b - curr_budget > 100)})
-            if history and cid in history:
-                h = history[cid]
-                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]): actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
-                if len(h) >= 2 and h[-2]['imps'] > 0 and (h[-2]['imps'] - h[-1]['imps']) / h[-2]['imps'] > 0.3: actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'HIGHER', 'reason': "展示量骤降 > 30%"})
-        return actions
 
     def get_yesterday_insights(self, date_str=None):
         try:
@@ -148,6 +155,19 @@ class CampaignManager:
             return hist
         except: return {}
 
+    def evaluate_optimization_rules(self, campaigns, insights, history=None):
+        cfg = self._load_config().get('strategy', {})
+        CPI_T = float(cfg.get('CPI_THRESHOLD', 2.0))
+        actions = []
+        for camp in campaigns:
+            cid = camp['id']
+            if camp['effective_status'] != 'ACTIVE': continue
+            ins = insights.get(cid, {})
+            spend, cpi, ctr, imps = ins.get('spend', 0), ins.get('cpi', 0), ins.get('ctr', 0), ins.get('imps', 0)
+            if cpi > CPI_T and spend > 50: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
+            elif ctr < 0.02 and imps > 1000: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CTR低 ({ctr*100:.2f}%)", 'risk': False})
+        return actions
+
     def get_all_campaigns(self):
         try: return sorted(requests.get(f"{self.base_url}/{self.ad_account_id}/campaigns", params={'fields': 'id,name,status,effective_status,start_time,daily_budget', 'access_token': self.access_token, 'limit': 50}).json().get('data', []), key=lambda x: x.get('start_time', '0'), reverse=True)
         except: return []
@@ -168,11 +188,7 @@ class CampaignManager:
         except: return False
 
     def delete_campaign(self, cid):
-        """[增强] 深度抹除逻辑：彻底释放 Page ID 空间"""
-        try:
-            # 1. 物理删除系列 (Meta 会级联尝试删除下属组和素材)
-            res = requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json()
-            return res.get('success', False)
+        try: return requests.delete(f"{self.base_url}/{cid}", params={'access_token': self.access_token}).json().get('success', False)
         except: return False
 
     def execute_action(self, action):

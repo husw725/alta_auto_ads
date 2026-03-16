@@ -26,26 +26,29 @@ class CampaignManager:
         except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5}}
 
     def _extract_real_name_from_url(self, video_url):
-        """[核心算法] 从视频链接中剥离出纯净剧名"""
+        """[增强版] 智能剥离剧名，支持保留 'a' 等冠词"""
         try:
             filename = unquote(video_url.split('/')[-1])
-            # 去除非 ASCII 字符 (如中文备注)
             name = filename.encode('ascii', 'ignore').decode('ascii')
-            # 替换特殊符号为空格
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
-            # 处理驼峰命名
             name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
-            # 移除后缀
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
             
             parts = name.split()
-            blacklist = {'v1','v2','v3','eng','en','us','pt','br','es','espanol','1080p','720p','60fps','30fps','short','final','fixed','export','ios','android','ad','drama','mp4','bsj','kk','alta','kkshort'}
+            # 常见杂质黑名单
+            blacklist = {'v1','v2','v3','eng','en','us','pt','br','es','espanol','1080p','720p','60fps','30fps','short','final','fixed','export','ios','android','ad','drama','mp4','bsj','kk','alta','kkshort','xxy','lzp','yl','lbj'}
+            # 必须保护的冠词/单词 (即便长度为 1)
+            protected_words = {'a', 'i'}
             
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                # 排除纯数字(日期/序号)、黑名单、单个字母
-                if re.match(r'^\d{4,12}$', p) or p_lower in blacklist or (p.isdigit() and len(p) < 5) or len(p) <= 1:
+                # 排除 4-12 位数字
+                if re.match(r'^\d{4,12}$', p): continue
+                # 排除黑名单
+                if p_lower in blacklist: continue
+                # 核心逻辑：如果是 1 个字母且不在保护名单里，或者是短数字(<5位且不是日期)，则剔除
+                if (len(p) <= 1 and p_lower not in protected_words) or (p.isdigit() and len(p) < 5):
                     continue
                 clean_parts.append(p)
             

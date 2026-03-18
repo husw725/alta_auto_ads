@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：素材名动态提取文案 + 赛马 (v2.11.8)"""
+    """二级优化稳健版：全能策略配置引擎 (v3.0.0)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -23,73 +23,73 @@ class CampaignManager:
     def _load_config(self):
         try:
             with open('config/config.json', 'r') as f: return json.load(f)
-        except: return {"default": {"country": "US", "daily_budget": 50}, "strategy": {"CPI_THRESHOLD": 2.0, "ROI_THRESHOLD": 0.5}}
+        except: return {"default": {"country": "US", "daily_budget": 50, "target_platform": "iOS", "promo_method": "w2a"}, "strategy": {"CPI_THRESHOLD": 2.0}}
 
     def _extract_real_name_from_url(self, video_url):
-        """[增强版] 智能剥离剧名，支持保留 'a' 等冠词"""
         try:
             filename = unquote(video_url.split('/')[-1])
             name = filename.encode('ascii', 'ignore').decode('ascii')
             name = re.sub(r'[\(\)\[\]\._\-]', ' ', name)
             name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
             name = re.sub(r'\s(mp4|mov|mkv)$', '', name, flags=re.IGNORECASE)
-            
             parts = name.split()
-            # 常见杂质黑名单
             blacklist = {'v1','v2','v3','eng','en','us','pt','br','es','espanol','1080p','720p','60fps','30fps','short','final','fixed','export','ios','android','ad','drama','mp4','bsj','kk','alta','kkshort','xxy','lzp','yl','lbj'}
-            # 必须保护的冠词/单词 (即便长度为 1)
             protected_words = {'a', 'i'}
-            
             clean_parts = []
             for p in parts:
                 p_lower = p.lower()
-                # 排除 4-12 位数字
-                if re.match(r'^\d{4,12}$', p): continue
-                # 排除黑名单
-                if p_lower in blacklist: continue
-                # 核心逻辑：如果是 1 个字母且不在保护名单里，或者是短数字(<5位且不是日期)，则剔除
-                if (len(p) <= 1 and p_lower not in protected_words) or (p.isdigit() and len(p) < 5):
-                    continue
+                if re.match(r'^\d{4,12}$', p) or p_lower in blacklist: continue
+                if len(p) <= 1 and p_lower not in protected_words: continue
                 clean_parts.append(p)
-            
             result = " ".join(clean_parts).strip()
             return result if len(result) > 2 else None
         except: return None
 
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
-        """创建 Campaign (🚀 支持素材名实时动态文案)"""
+        """创建 Campaign (🚀 全能配置版)"""
         try:
             token = self.access_token
+            # 🚀 [TASK 5.3] 动态读取所有核心策略
             cfg = self._load_config().get('default', {})
             country = cfg.get('country', 'US')
             budget_cents = int(cfg.get('daily_budget', 50)) * 100
+            platform = cfg.get('target_platform', 'iOS')
+            method = cfg.get('promo_method', 'w2a')
+            
             today = datetime.now().strftime('%Y%m%d')
+            # 🚀 动态命名：剧名-国家-日期-链路-Auto-平台-龙虾ai
+            name_base = f"{drama_name}-{country}-{today}-{method}-Auto-{platform}-龙虾ai"
             
-            # --- 🚀 [核心改进]：从第一个视频中提取“真实的英文剧名”用于文案 ---
             real_drama_name = self._extract_real_name_from_url(materials_list[0]['video_url'])
-            # 如果提取失败（比如全是中文），回退到原始剧名
             copy_seed_name = real_drama_name if real_drama_name else drama_name
-            print(f"🎯 提取纯净剧名用于文案: [{copy_seed_name}]")
-            
-            # 基础名依然保持您的命名规范
-            name_base = f"{drama_name}-{country}-{today}-w2a-Auto-龙虾ai"
 
-            # 自动修复上限
-            def do_create():
-                res = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
-                if 'error' in res and ('limit' in str(res['error']).lower() or 'volume' in str(res['error']).lower()):
-                    old_camps = self.get_all_campaigns()
-                    paused = [c for c in old_camps if c.get('effective_status') == 'PAUSED']
-                    if paused: self.delete_campaign(paused[-1]['id']); return requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
-                return res
-
-            c_resp = do_create()
+            # 1. 创建 Campaign
+            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
-            as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps({'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile'], 'user_os': ['iOS']}), 'status': 'PAUSED', 'access_token': token}).json().get('id')
+            # 2. 🚀 构建动态 Targeting (平台锁定)
+            targeting = {'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile']}
+            if platform == "iOS": targeting['user_os'] = ['iOS']
+            elif platform == "Android": targeting['user_os'] = ['Android']
+            # else All: 不加 user_os 限制
 
-            # 生成批量文案 (使用提取出的纯净名)
+            # 3. 创建 AdSet
+            as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={
+                'name': f"{name_base}-AS", 
+                'campaign_id': c_id, 
+                'optimization_goal': 'APP_INSTALLS', 
+                'destination_type': 'APP', 
+                'billing_event': 'IMPRESSIONS',
+                'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 
+                'targeting': json.dumps(targeting), 
+                'status': 'PAUSED', 
+                'access_token': token
+            }).json()
+            as_id = as_resp.get('id')
+            if not as_id: return {'status': 'error', 'error': f"AdSet Fail: {as_resp}"}
+
+            # 4. 批量生成文案与素材
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy_res = writer.generate_batch_copy(copy_seed_name, target_language=target_language, count=len(materials_list))
@@ -106,8 +106,14 @@ class CampaignManager:
                 if mat['cover_url']:
                     i_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': mat['cover_url'], 'access_token': token}).json()
                     if 'images' in i_res: img_hash = i_res['images'][list(i_res['images'].keys())[0]]['hash']
-                
-                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', f"Watch {copy_seed_name} now!"), 'title': curr_copy.get('headline', f"Watch {copy_seed_name}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
+                if not img_hash: img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
+
+                video_data = {
+                    'video_id': v_id, 
+                    'message': curr_copy.get('primary_text', 'Watch now!'), 
+                    'title': curr_copy.get('headline', f"Watch {copy_seed_name}"), 
+                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
+                }
                 if img_hash: video_data['image_hash'] = img_hash
                 else: video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
@@ -142,20 +148,6 @@ class CampaignManager:
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
                 res[cid] = {'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'roi': roi, 'ctr': clicks/imps, 'cvr': inst/clicks if clicks>0 else 0, 'cpm': spend/imps*1000, 'cpc': spend/clicks if clicks>0 else 0, 'cpi': spend/inst if inst>0 else 0, 'cpp': spend/purch if purch>0 else 0}
             return res
-        except: return {}
-
-    def get_historical_insights(self, days=7):
-        try:
-            url = f"{self.base_url}/{self.ad_account_id}/insights"
-            params = {'level': 'campaign', 'time_increment': 1, 'time_range': json.dumps({'since': (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'), 'until': datetime.now().strftime('%Y-%m-%d')}), 'fields': 'campaign_id,spend,actions,impressions', 'access_token': self.access_token}
-            resp = requests.get(url, params=params).json()
-            hist = {}
-            for item in resp.get('data', []):
-                cid = item['campaign_id']
-                if cid not in hist: hist[cid] = []
-                inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
-                hist[cid].append({'cpi': float(item.get('spend',0))/inst if inst>0 else 0, 'imps': int(item.get('impressions', 0))})
-            return hist
         except: return {}
 
     def evaluate_optimization_rules(self, campaigns, insights, history=None):

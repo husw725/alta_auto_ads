@@ -3,14 +3,14 @@ import requests
 import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：多维数据引擎 + 全能策略 (v3.1.0)"""
+    """二级优化稳健版：多维数据引擎 + 全能策略 (v3.1.1)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -98,7 +98,6 @@ class CampaignManager:
             return {'status': 'error', 'error': "No ads created."}
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
-    # 🚀 [TASK 6.1] 升级版数据引擎：支持自定义日期区间 + 购买数据
     def get_custom_insights(self, since, until):
         """精准抓取特定时间范围的 18 维指标数据"""
         try:
@@ -113,36 +112,48 @@ class CampaignManager:
             res = {}
             for item in resp.get('data', []):
                 cid = item['campaign_id']
-                spend = float(item.get('spend', 0))
-                imps = int(item.get('impressions', 1))
-                clicks = int(item.get('clicks', 0))
-                
-                # 深度提取：安装、购买
+                spend, imps, clicks = float(item.get('spend', 0)), int(item.get('impressions', 1)), int(item.get('clicks', 0))
                 inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
                 purch = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
-                
                 res[cid] = {
-                    'spend': spend, 'imps': imps, 'clicks': clicks, 
-                    'installs': inst, 'purchases': purch, 'roi': roi,
-                    'ctr': clicks / imps if imps > 0 else 0,
-                    'cvr': inst / clicks if clicks > 0 else 0,
-                    'pur_cvr': purch / clicks if clicks > 0 else 0, # 🚀 购买转化率
-                    'cpm': spend / imps * 1000 if imps > 0 else 0,
-                    'cpc': spend / clicks if clicks > 0 else 0,
-                    'cpi': spend / inst if inst > 0 else 0,
-                    'cpp': spend / purch if purch > 0 else 0   # 🚀 购买成本
+                    'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'purchases': purch, 'roi': roi,
+                    'ctr': clicks / imps if imps > 0 else 0, 'cvr': inst / clicks if clicks > 0 else 0, 'pur_cvr': purch / clicks if clicks > 0 else 0,
+                    'cpm': spend / imps * 1000 if imps > 0 else 0, 'cpc': spend / clicks if clicks > 0 else 0, 'cpi': spend / inst if inst > 0 else 0, 'cpp': spend / purch if purch > 0 else 0
                 }
             return res
         except: return {}
 
-    # 兼容旧代码调用
     def get_yesterday_insights(self, date_str=None):
         if not date_str:
-            from datetime import timezone, timedelta
             user_tz = timezone(timedelta(hours=-8))
             date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
         return self.get_custom_insights(date_str, date_str)
+
+    # 🚀 [RESTORED] 找回丢失的历史趋势抓取方法
+    def get_historical_insights(self, days=7):
+        try:
+            user_tz = timezone(timedelta(hours=-8))
+            now = datetime.now(user_tz)
+            since = (now - timedelta(days=days)).strftime('%Y-%m-%d')
+            until = now.strftime('%Y-%m-%d')
+            
+            url = f"{self.base_url}/{self.ad_account_id}/insights"
+            params = {
+                'level': 'campaign', 'time_increment': 1,
+                'time_range': json.dumps({'since': since, 'until': until}),
+                'fields': 'campaign_id,spend,actions,impressions', 'access_token': self.access_token
+            }
+            resp = requests.get(url, params=params).json()
+            hist = {}
+            for item in resp.get('data', []):
+                cid = item['campaign_id']
+                if cid not in hist: hist[cid] = []
+                inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
+                spend = float(item.get('spend', 0))
+                hist[cid].append({'cpi': spend/inst if inst>0 else 0, 'imps': int(item.get('impressions', 0))})
+            return hist
+        except: return {}
 
     def evaluate_optimization_rules(self, campaigns, insights, history=None):
         cfg = self._load_config().get('strategy', {})
@@ -155,6 +166,12 @@ class CampaignManager:
             spend, cpi, ctr, imps = ins.get('spend', 0), ins.get('cpi', 0), ins.get('ctr', 0), ins.get('imps', 0)
             if cpi > CPI_T and spend > 50: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
             elif ctr < 0.02 and imps > 1000: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CTR低 ({ctr*100:.2f}%)", 'risk': False})
+            
+            # 🚀 重新补全趋势判断逻辑
+            if history and cid in history:
+                h = history[cid]
+                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]):
+                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
         return actions
 
     def get_all_campaigns(self):

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：全能策略配置引擎 (v3.0.0)"""
+    """二级优化稳健版：多维数据引擎 + 全能策略 (v3.1.0)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -46,50 +46,27 @@ class CampaignManager:
         except: return None
 
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
-        """创建 Campaign (🚀 全能配置版)"""
         try:
             token = self.access_token
-            # 🚀 [TASK 5.3] 动态读取所有核心策略
             cfg = self._load_config().get('default', {})
-            country = cfg.get('country', 'US')
-            budget_cents = int(cfg.get('daily_budget', 50)) * 100
-            platform = cfg.get('target_platform', 'iOS')
-            method = cfg.get('promo_method', 'w2a')
-            
+            country, budget_cents = cfg.get('country', 'US'), int(cfg.get('daily_budget', 50)) * 100
+            platform, method = cfg.get('target_platform', 'iOS'), cfg.get('promo_method', 'w2a')
             today = datetime.now().strftime('%Y%m%d')
-            # 🚀 动态命名：剧名-国家-日期-链路-Auto-平台-龙虾ai
             name_base = f"{drama_name}-{country}-{today}-{method}-Auto-{platform}-龙虾ai"
             
             real_drama_name = self._extract_real_name_from_url(materials_list[0]['video_url'])
             copy_seed_name = real_drama_name if real_drama_name else drama_name
 
-            # 1. 创建 Campaign
             c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
-            # 2. 🚀 构建动态 Targeting (平台锁定)
             targeting = {'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile']}
             if platform == "iOS": targeting['user_os'] = ['iOS']
             elif platform == "Android": targeting['user_os'] = ['Android']
-            # else All: 不加 user_os 限制
 
-            # 3. 创建 AdSet
-            as_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={
-                'name': f"{name_base}-AS", 
-                'campaign_id': c_id, 
-                'optimization_goal': 'APP_INSTALLS', 
-                'destination_type': 'APP', 
-                'billing_event': 'IMPRESSIONS',
-                'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 
-                'targeting': json.dumps(targeting), 
-                'status': 'PAUSED', 
-                'access_token': token
-            }).json()
-            as_id = as_resp.get('id')
-            if not as_id: return {'status': 'error', 'error': f"AdSet Fail: {as_resp}"}
+            as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps(targeting), 'status': 'PAUSED', 'access_token': token}).json().get('id')
 
-            # 4. 批量生成文案与素材
             from skills.copywriter import Copywriter
             writer = Copywriter()
             copy_res = writer.generate_batch_copy(copy_seed_name, target_language=target_language, count=len(materials_list))
@@ -98,22 +75,15 @@ class CampaignManager:
             ad_ids = []
             for idx, mat in enumerate(materials_list):
                 curr_copy = versions[idx] if idx < len(versions) else (versions[0] if versions else {})
-                v_res = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json()
-                v_id = v_res.get('id')
+                v_id = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json().get('id')
                 if not v_id: continue
-                
                 img_hash = None
                 if mat['cover_url']:
                     i_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': mat['cover_url'], 'access_token': token}).json()
                     if 'images' in i_res: img_hash = i_res['images'][list(i_res['images'].keys())[0]]['hash']
                 if not img_hash: img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
 
-                video_data = {
-                    'video_id': v_id, 
-                    'message': curr_copy.get('primary_text', 'Watch now!'), 
-                    'title': curr_copy.get('headline', f"Watch {copy_seed_name}"), 
-                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}
-                }
+                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', 'Watch!'), 'title': curr_copy.get('headline', f"Watch V{idx+1}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
                 if img_hash: video_data['image_hash'] = img_hash
                 else: video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
@@ -128,14 +98,17 @@ class CampaignManager:
             return {'status': 'error', 'error': "No ads created."}
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
-    def get_yesterday_insights(self, date_str=None):
+    # 🚀 [TASK 6.1] 升级版数据引擎：支持自定义日期区间 + 购买数据
+    def get_custom_insights(self, since, until):
+        """精准抓取特定时间范围的 18 维指标数据"""
         try:
-            from datetime import datetime, timedelta, timezone
-            if not date_str:
-                user_tz = timezone(timedelta(hours=-8))
-                date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
             url = f"{self.base_url}/{self.ad_account_id}/insights"
-            params = {'level': 'campaign', 'time_range': json.dumps({'since': date_str, 'until': date_str}), 'fields': 'campaign_id,spend,impressions,clicks,actions,purchase_roas', 'access_token': self.access_token}
+            params = {
+                'level': 'campaign',
+                'time_range': json.dumps({'since': since, 'until': until}),
+                'fields': 'campaign_id,spend,impressions,clicks,actions,purchase_roas',
+                'access_token': self.access_token
+            }
             resp = requests.get(url, params=params).json()
             res = {}
             for item in resp.get('data', []):
@@ -143,12 +116,33 @@ class CampaignManager:
                 spend = float(item.get('spend', 0))
                 imps = int(item.get('impressions', 1))
                 clicks = int(item.get('clicks', 0))
+                
+                # 深度提取：安装、购买
                 inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
                 purch = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
-                res[cid] = {'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'roi': roi, 'ctr': clicks/imps, 'cvr': inst/clicks if clicks>0 else 0, 'cpm': spend/imps*1000, 'cpc': spend/clicks if clicks>0 else 0, 'cpi': spend/inst if inst>0 else 0, 'cpp': spend/purch if purch>0 else 0}
+                
+                res[cid] = {
+                    'spend': spend, 'imps': imps, 'clicks': clicks, 
+                    'installs': inst, 'purchases': purch, 'roi': roi,
+                    'ctr': clicks / imps if imps > 0 else 0,
+                    'cvr': inst / clicks if clicks > 0 else 0,
+                    'pur_cvr': purch / clicks if clicks > 0 else 0, # 🚀 购买转化率
+                    'cpm': spend / imps * 1000 if imps > 0 else 0,
+                    'cpc': spend / clicks if clicks > 0 else 0,
+                    'cpi': spend / inst if inst > 0 else 0,
+                    'cpp': spend / purch if purch > 0 else 0   # 🚀 购买成本
+                }
             return res
         except: return {}
+
+    # 兼容旧代码调用
+    def get_yesterday_insights(self, date_str=None):
+        if not date_str:
+            from datetime import timezone, timedelta
+            user_tz = timezone(timedelta(hours=-8))
+            date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
+        return self.get_custom_insights(date_str, date_str)
 
     def evaluate_optimization_rules(self, campaigns, insights, history=None):
         cfg = self._load_config().get('strategy', {})
@@ -187,11 +181,8 @@ class CampaignManager:
         except: return False
 
     def execute_action(self, action):
-        try:
-            if action['type'] == 'PAUSE': return self.update_campaign_status(action['cid'], 'PAUSED')
-            if action['type'] == 'BUDGET': return requests.post(f"{self.base_url}/{action['cid']}", data={'daily_budget': int(action['value'] * 100), 'access_token': self.access_token}).json().get('success', False)
-            return True
-        except: return False
+        if action['type'] == 'PAUSE': return self.update_campaign_status(action['cid'], 'PAUSED')
+        return False
 
     def _get_video_thumbnail_hash_smart(self, vid, token):
         for i in range(3):

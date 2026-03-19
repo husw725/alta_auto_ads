@@ -228,9 +228,13 @@ elif page == "📊 数据看板":
             with cl1: st.write(f"**{name}**")
             with cl2:
                 if st.button("👁️ 预览", key=f"prev_{cid}"):
-                    with st.spinner("拉取预览..."):
+                    with st.spinner("正在从 Meta 提取素材预览..."):
                         preview_list = campaign_manager.get_ad_preview(cid)
-                        if preview_list: st.session_state.active_preview = {'campaign_name': name, 'list': preview_list}; st.rerun()
+                        if preview_list: 
+                            st.session_state.active_preview = {'campaign_name': name, 'list': preview_list}
+                            st.rerun()
+                        else:
+                            st.error("❌ 暂时无法获取该广告的预览（可能正在审核中或素材格式暂不支持）")
             with cl3:
                 if st.button("🟢 激活", key=f"act_{cid}", disabled=(status=='ACTIVE')):
                     if campaign_manager.update_campaign_status(cid, "ACTIVE"): 

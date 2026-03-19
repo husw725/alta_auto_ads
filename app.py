@@ -54,6 +54,7 @@ if 'yesterday_insights' not in st.session_state: st.session_state.yesterday_insi
 if 'pending_actions' not in st.session_state: st.session_state.pending_actions = []
 if 'current_date_view' not in st.session_state: st.session_state.current_date_view = ""
 if 'active_preview' not in st.session_state: st.session_state.active_preview = None
+if 'ad_details' not in st.session_state: st.session_state.ad_details = {}
 
 # 核心模块
 ads_module = AutoMetaADS()
@@ -127,13 +128,10 @@ elif page == "📊 数据看板":
     st.title("📊 广告效果数据中心")
     user_tz = timezone(timedelta(hours=-8))
     now_user = datetime.now(user_tz)
-    today_dt = now_user.date()
-    yesterday_dt = today_dt - timedelta(days=1)
+    today_dt, yesterday_dt = now_user.date(), now_user.date() - timedelta(days=1)
 
-    # 日期选择
     date_col1, date_col2 = st.columns([2, 3])
     quick_select = date_col1.radio("快速选择", ["今天", "昨天", "自定义"], index=0, horizontal=True)
-    
     if quick_select == "今天": start_date, end_date = today_dt, today_dt
     elif quick_select == "昨天": start_date, end_date = yesterday_dt, yesterday_dt
     else: 
@@ -150,7 +148,6 @@ elif page == "📊 数据看板":
             st.session_state.yesterday_insights = campaign_manager.get_custom_insights(since_str, until_str)
             st.session_state.current_date_view = f"{since_str}_{until_str}"
 
-    # 顶部 KPI
     if st.session_state.yesterday_insights:
         ins_map = st.session_state.yesterday_insights
         total_spend = sum(ins.get('spend', 0) for ins in ins_map.values())
@@ -158,10 +155,7 @@ elif page == "📊 数据看板":
         total_purchases = sum(ins.get('purchases', 0) for ins in ins_map.values())
         avg_cpi = total_spend / total_installs if total_installs > 0 else 0
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("区间总消耗", f"${total_spend:,.2f}")
-        k2.metric("区间总安装", f"{int(total_installs):,}")
-        k3.metric("总购买", f"{int(total_purchases):,}")
-        k4.metric("平均 CPI", f"${avg_cpi:.2f}")
+        k1.metric("区间总消耗", f"${total_spend:,.2f}"); k2.metric("区间总安装", f"{int(total_installs):,}"); k3.metric("总购买", f"{int(total_purchases):,}"); k4.metric("平均 CPI", f"${avg_cpi:.2f}")
 
     st.subheader("🤖 智能调优建议")
     c1, c2 = st.columns([1, 1])
@@ -202,7 +196,6 @@ elif page == "📊 数据看板":
     if st.button("🔄 手动同步 Meta 最新全量数据", width='stretch'):
         st.session_state.campaign_list = []; st.rerun()
 
-    # --- 🌟 [MANDATORY] 19 指标大看板 ---
     if st.session_state.campaign_list:
         rows = []
         insights = st.session_state.yesterday_insights
@@ -210,31 +203,25 @@ elif page == "📊 数据看板":
             cid, ins = c.get('id'), insights.get(c.get('id'), {})
             raw_time = c.get('start_time', '')[:16].replace('T', ' ')
             rows.append({
-                "广告id": cid, "名称": c.get('name'), "状态": c.get('effective_status'), 
-                "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
-                "预算$": float(c.get('daily_budget', 0)) / 100, 
-                "花费$": ins.get('spend', 0), "曝光": ins.get('imps', 0), "点击": ins.get('clicks', 0),
+                "广告id": cid, "名称": c.get('name'), "状态": c.get('effective_status'), "创建时间": raw_time, "投放日期": raw_time.split()[0] if raw_time else '-',
+                "预算$": float(c.get('daily_budget', 0)) / 100, "花费$": ins.get('spend', 0), "曝光": ins.get('imps', 0), "点击": ins.get('clicks', 0),
                 "CTR": f"{ins.get('ctr', 0)*100:.2f}%", "安装": ins.get('installs', 0), "CPI$": f"{ins.get('cpi', 0):.2f}",
                 "购买": ins.get('purchases', 0), "CPP$": f"{ins.get('cpp', 0):.2f}", "ROI": f"{ins.get('roi', 0):.2f}",
-                "CVR": f"{ins.get('cvr', 0)*100:.2f}%", "PurCVR": f"{ins.get('pur_cvr', 0)*100:.2f}%",
-                "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}"
+                "CVR": f"{ins.get('cvr', 0)*100:.2f}%", "PurCVR": f"{ins.get('pur_cvr', 0)*100:.2f}%", "CPM": f"${ins.get('cpm', 0):.2f}", "CPC": f"${ins.get('cpc', 0):.2f}"
             })
         st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
-        st.subheader("⚙️ 生命周期管理")
+        st.subheader("⚙️ 生命周期与赛马穿透管理")
         for index, row in pd.DataFrame(rows).iterrows():
             cid, name, status = row['广告id'], row['名称'], row['状态']
             cl1, cl2, cl3, cl4, cl5 = st.columns([3, 1, 1, 1, 1])
             with cl1: st.write(f"**{name}**")
             with cl2:
                 if st.button("👁️ 预览", key=f"prev_{cid}"):
-                    with st.spinner("正在从 Meta 提取素材预览..."):
-                        preview_list = campaign_manager.get_ad_preview(cid)
-                        if preview_list: 
-                            st.session_state.active_preview = {'campaign_name': name, 'list': preview_list}
-                            st.rerun()
-                        else:
-                            st.error("❌ 暂时无法获取该广告的预览（可能正在审核中或素材格式暂不支持）")
+                    with st.spinner("拉取预览..."):
+                        p_list = campaign_manager.get_ad_preview(cid)
+                        if p_list: st.session_state.active_preview = {'campaign_name': name, 'list': p_list}; st.rerun()
+                        else: st.error("无法获取预览")
             with cl3:
                 if st.button("🟢 激活", key=f"act_{cid}", disabled=(status=='ACTIVE')):
                     if campaign_manager.update_campaign_status(cid, "ACTIVE"): 
@@ -255,12 +242,32 @@ elif page == "📊 数据看板":
                             st.session_state.campaign_list = [c for c in st.session_state.campaign_list if c.get('id') != cid]; st.session_state[del_k] = False; st.rerun()
                     if st.button("取消", key=f"rdel_{cid}"): st.session_state[del_k] = False; st.rerun()
                 elif st.button("🗑️ 删", key=f"pre_{cid}"): st.session_state[del_k] = True; st.rerun()
+            
+            # 🚀 [TASK 7.2] 赛马详情穿透展示
+            with st.expander(f"📊 查看该系列下的 5 个素材赛马详情"):
+                if st.button("🔃 加载/刷新素材细分数据", key=f"load_ad_{cid}"):
+                    with st.spinner("正在穿透抓取 Ad 级别数据..."):
+                        st.session_state.ad_details[cid] = campaign_manager.get_ad_level_details(cid, since_str, until_str)
+                
+                if cid in st.session_state.ad_details:
+                    ad_data = st.session_state.ad_details[cid]
+                    if ad_data:
+                        # 转换成 DataFrame 显示
+                        df_ad = pd.DataFrame(ad_data)
+                        # 重命名/格式化列以适应小屏幕
+                        display_cols = {
+                            'name': '素材名称', 'effective_status': '状态', 'spend': '花费$', 'installs': '安装', 
+                            'purchases': '购买', 'cpi': 'CPI$', 'ctr': 'CTR', 'cvr': 'CVR'
+                        }
+                        df_show = df_ad[list(display_cols.keys())].rename(columns=display_cols)
+                        st.table(df_show) # 使用静态表格更清晰
+                    else: st.info("该系列下暂无素材数据。")
             st.divider()
 
 elif page == "⚙️ 系统设置":
     st.title("⚙️ 系统与策略配置")
     config = load_config()
-    with st.expander("🚀 投流基础策略 (平台与链路控制)", expanded=True):
+    with st.expander("🚀 投流基础策略", expanded=True):
         c1, c2 = st.columns(2)
         d_country = c1.selectbox("国家", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "KR"], index=0)
         d_budget = c1.number_input("默认预算 ($)", value=int(config['default'].get('daily_budget', 50)))
@@ -284,4 +291,4 @@ elif page == "⚙️ 系统设置":
         if st.button("💾 保存日报配置"):
             config['report'].update({"webhook_url": webhook, "send_time": send_time}); save_config(config); st.success("✅ 设置已保存！"); st.rerun()
 
-st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v3.1.2 | 全量指标回归版</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #888; font-size: 12px;'>Auto Meta ADS v3.2.0 | 赛马穿透透视版</div>", unsafe_allow_html=True)

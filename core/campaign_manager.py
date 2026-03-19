@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：穿透式数据引擎 + 全能策略 (v3.2.0)"""
+    """二级优化稳健版：穿透式数据引擎 + 全能策略 (v3.2.1)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
@@ -109,7 +109,6 @@ class CampaignManager:
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
     def get_custom_insights(self, since, until, level='campaign'):
-        """抓取指标数据 (支持 campaign 或 ad 级别)"""
         try:
             url = f"{self.base_url}/{self.ad_account_id}/insights"
             params = {'level': level, 'time_range': json.dumps({'since': since, 'until': until}), 'fields': 'campaign_id,ad_id,ad_name,spend,impressions,clicks,actions,purchase_roas', 'access_token': self.access_token, 'limit': 1000}
@@ -125,19 +124,12 @@ class CampaignManager:
             return res
         except: return {}
 
-    # 🚀 [TASK 7.1] 新增：获取系列下的所有具体广告详情
     def get_ad_level_details(self, campaign_id, since, until):
-        """抓取该系列下的具体赛马素材表现"""
         try:
-            # 1. 抓取该系列下的所有 Ad 基础信息
             url = f"{self.base_url}/{campaign_id}/ads"
             params = {'fields': 'id,name,status,effective_status', 'access_token': self.access_token}
             ads_base = requests.get(url, params=params).json().get('data', [])
-            
-            # 2. 抓取该系列下 Ad 级别的数据表现
             insights = self.get_custom_insights(since, until, level='ad')
-            
-            # 合并数据
             results = []
             for ad in ads_base:
                 ins = insights.get(ad['id'], {})
@@ -181,15 +173,33 @@ class CampaignManager:
         except: return []
 
     def get_ad_preview(self, campaign_id):
+        """[增强版] 智能多格式预览：支持自动降级兼容逻辑"""
         try:
             ads_res = requests.get(f"{self.base_url}/{campaign_id}/ads", params={'fields': 'id,name', 'access_token': self.access_token}).json()
+            if 'error' in ads_res:
+                print(f"❌ Meta API Error (Ads List): {ads_res['error']}")
+                return []
+                
             previews = []
+            # 🚀 尝试的格式列表，按优先级排序
+            formats = ['MOBILE_FEED_STANDARD', 'INSTAGRAM_STORY', 'FACEBOOK_STORY']
+            
             for ad in ads_res.get('data', []):
-                prev_res = requests.get(f"{self.base_url}/{ad['id']}/previews", params={'ad_format': 'MOBILE_FEED_STANDARD', 'access_token': self.access_token}).json()
-                body = prev_res.get('data', [{}])[0].get('body')
-                if body: previews.append({'name': ad['name'], 'html': body})
+                ad_body = None
+                # 🚀 自动尝试不同格式直到成功
+                for fmt in formats:
+                    prev_res = requests.get(f"{self.base_url}/{ad['id']}/previews", params={'ad_format': fmt, 'access_token': self.access_token}).json()
+                    if 'data' in prev_res and prev_res['data']:
+                        ad_body = prev_res['data'][0].get('body')
+                        if ad_body: break # 成功拿到一种格式就跳出
+                
+                if ad_body:
+                    previews.append({'name': ad['name'], 'html': ad_body})
+            
             return previews
-        except: return []
+        except Exception as e:
+            print(f"❌ Preview Logic Exception: {e}")
+            return []
 
     def update_campaign_status(self, cid, status):
         try: return requests.post(f"{self.base_url}/{cid}", data={'status': status, 'access_token': self.access_token}).json().get('success', False)

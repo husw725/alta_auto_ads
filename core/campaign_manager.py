@@ -17,7 +17,7 @@ class CampaignManager:
         self.ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
         self.page_id = os.getenv('META_PAGE_ID')
         self.meta_app_id = "1807921329643155"
-        self.IOS_STORE_URL = "http://itunes.apple.com/app/id6469592412"
+        self.IOS_STORE_URL = "https://apps.apple.com/app/id6469592412"
         self.ANDROID_STORE_URL = "https://play.google.com/store/apps/details?id=com.melotmobile.kkshort"
         self.base_url = "https://graph.facebook.com/v21.0"
 

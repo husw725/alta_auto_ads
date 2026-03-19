@@ -10,14 +10,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class CampaignManager:
-    """二级优化稳健版：多维数据引擎 + 全能策略 (v3.1.1)"""
+    """二级优化稳健版：双端智能分发引擎 (v3.1.3)"""
     
     def __init__(self):
         self.access_token = os.getenv('META_ACCESS_TOKEN')
         self.ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
         self.page_id = os.getenv('META_PAGE_ID')
-        self.meta_app_id = "1807921329643155"
-        self.official_store_url = "http://itunes.apple.com/app/id6469592412"
+        self.meta_app_id = "1807921329643155" # 全局公共 App ID
+        
+        # 🚀 商店链接定义
+        self.IOS_STORE_URL = "http://itunes.apple.com/app/id6469592412"
+        self.ANDROID_STORE_URL = "https://play.google.com/store/apps/details?id=com.melotmobile.kkshort"
+        
         self.base_url = "https://graph.facebook.com/v21.0"
 
     def _load_config(self):
@@ -46,26 +50,52 @@ class CampaignManager:
         except: return None
 
     def create_campaign(self, drama_name, materials_list, target_language="英语"):
+        """创建 Campaign (🚀 支持 iOS/Android 双端智能识别)"""
         try:
             token = self.access_token
             cfg = self._load_config().get('default', {})
             country, budget_cents = cfg.get('country', 'US'), int(cfg.get('daily_budget', 50)) * 100
             platform, method = cfg.get('target_platform', 'iOS'), cfg.get('promo_method', 'w2a')
+            
+            # 🚀 1. 动态选择商店链接
+            active_store_url = self.IOS_STORE_URL if platform == "iOS" else self.ANDROID_STORE_URL
+            
             today = datetime.now().strftime('%Y%m%d')
             name_base = f"{drama_name}-{country}-{today}-{method}-Auto-{platform}-龙虾ai"
             
             real_drama_name = self._extract_real_name_from_url(materials_list[0]['video_url'])
             copy_seed_name = real_drama_name if real_drama_name else drama_name
 
-            c_resp = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+            # 创建系列 (上限自愈逻辑集成)
+            def do_create():
+                res = requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                if 'error' in res and ('limit' in str(res['error']).lower() or 'volume' in str(res['error']).lower()):
+                    old_camps = self.get_all_campaigns()
+                    paused = [c for c in old_camps if c.get('effective_status') == 'PAUSED']
+                    if paused: self.delete_campaign(paused[-1]['id']); return requests.post(f"{self.base_url}/{self.ad_account_id}/campaigns", data={'name': name_base, 'objective': 'OUTCOME_APP_PROMOTION', 'status': 'PAUSED', 'special_ad_categories': json.dumps(['NONE']), 'daily_budget': budget_cents, 'bid_strategy': 'LOWEST_COST_WITHOUT_CAP', 'access_token': token}).json()
+                return res
+
+            c_resp = do_create()
             c_id = c_resp.get('id')
             if not c_id: return {'status': 'error', 'error': f"Campaign Fail: {c_resp}"}
 
+            # 构建 Targeting
             targeting = {'geo_locations': {'countries': [country]}, 'device_platforms': ['mobile']}
             if platform == "iOS": targeting['user_os'] = ['iOS']
             elif platform == "Android": targeting['user_os'] = ['Android']
 
-            as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={'name': f"{name_base}-AS", 'campaign_id': c_id, 'optimization_goal': 'APP_INSTALLS', 'destination_type': 'APP', 'billing_event': 'IMPRESSIONS', 'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': self.official_store_url}), 'targeting': json.dumps(targeting), 'status': 'PAUSED', 'access_token': token}).json().get('id')
+            # 创建 AdSet (使用动态商店链接)
+            as_id = requests.post(f"{self.base_url}/{self.ad_account_id}/adsets", data={
+                'name': f"{name_base}-AS", 
+                'campaign_id': c_id, 
+                'optimization_goal': 'APP_INSTALLS', 
+                'destination_type': 'APP', 
+                'billing_event': 'IMPRESSIONS',
+                'promoted_object': json.dumps({'application_id': self.meta_app_id, 'object_store_url': active_store_url}), 
+                'targeting': json.dumps(targeting), 
+                'status': 'PAUSED', 
+                'access_token': token
+            }).json().get('id')
 
             from skills.copywriter import Copywriter
             writer = Copywriter()
@@ -75,15 +105,22 @@ class CampaignManager:
             ad_ids = []
             for idx, mat in enumerate(materials_list):
                 curr_copy = versions[idx] if idx < len(versions) else (versions[0] if versions else {})
-                v_id = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json().get('id')
+                v_res = requests.post(f"{self.base_url}/{self.ad_account_id}/advideos", data={'file_url': mat['video_url'], 'access_token': token}).json()
+                v_id = v_res.get('id')
                 if not v_id: continue
+                
                 img_hash = None
                 if mat['cover_url']:
                     i_res = requests.post(f"{self.base_url}/{self.ad_account_id}/adimages", data={'copy_from_url': mat['cover_url'], 'access_token': token}).json()
                     if 'images' in i_res: img_hash = i_res['images'][list(i_res['images'].keys())[0]]['hash']
                 if not img_hash: img_hash = self._get_video_thumbnail_hash_smart(v_id, token)
 
-                video_data = {'video_id': v_id, 'message': curr_copy.get('primary_text', 'Watch!'), 'title': curr_copy.get('headline', f"Watch V{idx+1}"), 'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': self.official_store_url}}}
+                video_data = {
+                    'video_id': v_id, 
+                    'message': curr_copy.get('primary_text', f"Watch {copy_seed_name} now!"), 
+                    'title': curr_copy.get('headline', f"Watch {copy_seed_name}"), 
+                    'call_to_action': {'type': 'INSTALL_APP', 'value': {'link': active_store_url}}
+                }
                 if img_hash: video_data['image_hash'] = img_hash
                 else: video_data['image_url'] = "https://starlitshorts.s3.amazonaws.com/s/986f2dd37aba040d55361a407ca860f5.png"
 
@@ -99,15 +136,9 @@ class CampaignManager:
         except Exception as e: return {'status': 'error', 'error': str(e)}
 
     def get_custom_insights(self, since, until):
-        """精准抓取特定时间范围的 18 维指标数据"""
         try:
             url = f"{self.base_url}/{self.ad_account_id}/insights"
-            params = {
-                'level': 'campaign',
-                'time_range': json.dumps({'since': since, 'until': until}),
-                'fields': 'campaign_id,spend,impressions,clicks,actions,purchase_roas',
-                'access_token': self.access_token
-            }
+            params = {'level': 'campaign', 'time_range': json.dumps({'since': since, 'until': until}), 'fields': 'campaign_id,spend,impressions,clicks,actions,purchase_roas', 'access_token': self.access_token}
             resp = requests.get(url, params=params).json()
             res = {}
             for item in resp.get('data', []):
@@ -116,34 +147,18 @@ class CampaignManager:
                 inst = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] == 'mobile_app_install')
                 purch = sum(int(a['value']) for a in item.get('actions', []) if a['action_type'] in ['purchase', 'fb_pixel_purchase'])
                 roi = float(item['purchase_roas'][0]['value']) if item.get('purchase_roas') else 0
-                res[cid] = {
-                    'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'purchases': purch, 'roi': roi,
-                    'ctr': clicks / imps if imps > 0 else 0, 'cvr': inst / clicks if clicks > 0 else 0, 'pur_cvr': purch / clicks if clicks > 0 else 0,
-                    'cpm': spend / imps * 1000 if imps > 0 else 0, 'cpc': spend / clicks if clicks > 0 else 0, 'cpi': spend / inst if inst > 0 else 0, 'cpp': spend / purch if purch > 0 else 0
-                }
+                res[cid] = {'spend': spend, 'imps': imps, 'clicks': clicks, 'installs': inst, 'purchases': purch, 'roi': roi, 'ctr': clicks / imps if imps > 0 else 0, 'cvr': inst / clicks if clicks > 0 else 0, 'pur_cvr': purch / clicks if clicks > 0 else 0, 'cpm': spend / imps * 1000 if imps > 0 else 0, 'cpc': spend / clicks if clicks > 0 else 0, 'cpi': spend / inst if inst > 0 else 0, 'cpp': spend / purch if purch > 0 else 0}
             return res
         except: return {}
 
-    def get_yesterday_insights(self, date_str=None):
-        if not date_str:
-            user_tz = timezone(timedelta(hours=-8))
-            date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
-        return self.get_custom_insights(date_str, date_str)
-
-    # 🚀 [RESTORED] 找回丢失的历史趋势抓取方法
     def get_historical_insights(self, days=7):
         try:
             user_tz = timezone(timedelta(hours=-8))
             now = datetime.now(user_tz)
             since = (now - timedelta(days=days)).strftime('%Y-%m-%d')
             until = now.strftime('%Y-%m-%d')
-            
             url = f"{self.base_url}/{self.ad_account_id}/insights"
-            params = {
-                'level': 'campaign', 'time_increment': 1,
-                'time_range': json.dumps({'since': since, 'until': until}),
-                'fields': 'campaign_id,spend,actions,impressions', 'access_token': self.access_token
-            }
+            params = {'level': 'campaign', 'time_increment': 1, 'time_range': json.dumps({'since': since, 'until': until}), 'fields': 'campaign_id,spend,actions,impressions', 'access_token': self.access_token}
             resp = requests.get(url, params=params).json()
             hist = {}
             for item in resp.get('data', []):
@@ -154,6 +169,12 @@ class CampaignManager:
                 hist[cid].append({'cpi': spend/inst if inst>0 else 0, 'imps': int(item.get('impressions', 0))})
             return hist
         except: return {}
+
+    def get_yesterday_insights(self, date_str=None):
+        if not date_str:
+            user_tz = timezone(timedelta(hours=-8))
+            date_str = (datetime.now(user_tz) - timedelta(days=1)).strftime('%Y-%m-%d')
+        return self.get_custom_insights(date_str, date_str)
 
     def evaluate_optimization_rules(self, campaigns, insights, history=None):
         cfg = self._load_config().get('strategy', {})
@@ -166,12 +187,9 @@ class CampaignManager:
             spend, cpi, ctr, imps = ins.get('spend', 0), ins.get('cpi', 0), ins.get('ctr', 0), ins.get('imps', 0)
             if cpi > CPI_T and spend > 50: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CPI (${cpi:.2f}) > {CPI_T}", 'risk': (spend > 200)})
             elif ctr < 0.02 and imps > 1000: actions.append({'type': 'PAUSE', 'cid': cid, 'name': camp['name'], 'reason': f"CTR低 ({ctr*100:.2f}%)", 'risk': False})
-            
-            # 🚀 重新补全趋势判断逻辑
             if history and cid in history:
                 h = history[cid]
-                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]):
-                    actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
+                if len(h) >= 3 and all(d['cpi'] > CPI_T for d in h[-3:]): actions.append({'type': 'BID', 'cid': cid, 'name': camp['name'], 'action': 'LOWER', 'reason': "CPI 连续 3 天超标"})
         return actions
 
     def get_all_campaigns(self):
